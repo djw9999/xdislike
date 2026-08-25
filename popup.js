@@ -1,0 +1,150 @@
+document.addEventListener('DOMContentLoaded', () => {
+  restoreState();
+  wireMiniWindowButtons();
+  wireSettings();
+});
+
+let statusResetTimer = null;
+
+function restoreState() {
+  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds'], (result) => {
+    updateUI();
+    const mergeEl = document.getElementById('merge-community-tabs');
+    if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
+    const blockAdsEl = document.getElementById('block-ads');
+    if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+  });
+}
+
+function updateUI() {
+  const features = document.getElementById('main-features');
+
+  if (features) {
+    features.style.display = 'grid';
+  }
+
+  setStatus('READY');
+}
+
+function setStatus(label, locked = false, resetAfterMs = 0) {
+  const status = document.getElementById('ready-status');
+  if (!status) return;
+
+  if (statusResetTimer) {
+    clearTimeout(statusResetTimer);
+    statusResetTimer = null;
+  }
+
+  status.innerText = label;
+  status.classList.toggle('locked', locked);
+
+  if (resetAfterMs > 0) {
+    statusResetTimer = window.setTimeout(() => {
+      statusResetTimer = null;
+      setStatus('READY');
+    }, resetAfterMs);
+  }
+}
+
+function wireSettings() {
+  const mergeEl = document.getElementById('merge-community-tabs');
+  const blockAdsEl = document.getElementById('block-ads');
+
+  if (mergeEl) {
+    mergeEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ mergeCommunityTabs: !!mergeEl.checked });
+    });
+  }
+
+  if (blockAdsEl) {
+    blockAdsEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+}
+
+const MINI_WINDOW_ID_KEY = 'miniWindowId';
+
+function wireMiniWindowButtons() {
+  const openBtn = document.getElementById('open-mini-btn');
+  const closeBtn = document.getElementById('close-mini-btn');
+
+  if (openBtn) openBtn.addEventListener('click', openOrFocusMiniWindow);
+  if (closeBtn) closeBtn.addEventListener('click', closeMiniWindow);
+
+  const cleanBtn = document.getElementById('open-cleaner-btn');
+  if (cleanBtn) {
+    cleanBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0] && tabs[0].id) {
+          chrome.tabs.sendMessage(tabs[0].id, { action: 'TOGGLE_CLEANER_MODE' }, (response) => {
+             if (chrome.runtime.lastError) {
+                 setStatus('OPEN X TAB', true, 2200);
+             } else {
+                 setStatus(response && response.enabled ? 'CLEANUP ON' : 'CLEANUP OFF', false, 1800);
+             }
+          });
+        } else {
+             setStatus('OPEN X TAB', true, 2200);
+        }
+      });
+    });
+  }
+}
+
+function openOrFocusMiniWindow() {
+  chrome.storage.local.get([MINI_WINDOW_ID_KEY], (result) => {
+    const existingId = result && result[MINI_WINDOW_ID_KEY];
+
+    if (typeof existingId === 'number') {
+      chrome.windows.get(existingId, (win) => {
+        if (!chrome.runtime.lastError && win) {
+          chrome.windows.update(existingId, { focused: true }, () => {});
+          setStatus('MINI READY', false, 1800);
+          return;
+        }
+
+        chrome.storage.local.remove([MINI_WINDOW_ID_KEY], () => {
+          createMiniWindow();
+        });
+      });
+      return;
+    }
+
+    createMiniWindow();
+  });
+}
+
+function createMiniWindow() {
+  chrome.windows.create(
+    {
+      url: 'https://x.com/home',
+      type: 'popup',
+      width: 420,
+      height: 800,
+      focused: true
+    },
+    (win) => {
+      if (chrome.runtime.lastError || !win || typeof win.id !== 'number') return;
+
+      chrome.storage.local.set({ [MINI_WINDOW_ID_KEY]: win.id }, () => {
+        setStatus('MINI READY', false, 1800);
+      });
+    }
+  );
+}
+
+function closeMiniWindow() {
+  chrome.storage.local.get([MINI_WINDOW_ID_KEY], (result) => {
+    const id = result && result[MINI_WINDOW_ID_KEY];
+    if (typeof id !== 'number') {
+      return;
+    }
+
+    chrome.windows.remove(id, () => {
+      chrome.storage.local.remove([MINI_WINDOW_ID_KEY], () => {
+        setStatus('MINI CLOSED', false, 1800);
+      });
+    });
+  });
+}
