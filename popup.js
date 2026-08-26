@@ -7,12 +7,28 @@ document.addEventListener('DOMContentLoaded', () => {
 let statusResetTimer = null;
 
 function restoreState() {
-  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds'], (result) => {
+  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds', 'isPro', 'hideGrokChrome'], (result) => {
     updateUI();
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
     const blockAdsEl = document.getElementById('block-ads');
     if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+
+    const isPro = !!result.isPro;
+    const hideGrokChromeEl = document.getElementById('hide-grok-chrome');
+    const hideGrokChromeCard = document.getElementById('hide-grok-chrome-card');
+
+    if (hideGrokChromeEl && hideGrokChromeCard) {
+      if (isPro) {
+        hideGrokChromeEl.disabled = false;
+        hideGrokChromeCard.classList.remove('locked');
+        hideGrokChromeEl.checked = result.hideGrokChrome !== false;
+      } else {
+        hideGrokChromeEl.disabled = true;
+        hideGrokChromeCard.classList.add('locked');
+        hideGrokChromeEl.checked = false;
+      }
+    }
   });
 }
 
@@ -49,6 +65,7 @@ function setStatus(label, locked = false, resetAfterMs = 0) {
 function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
+  const hideGrokChromeEl = document.getElementById('hide-grok-chrome');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -59,6 +76,12 @@ function wireSettings() {
   if (blockAdsEl) {
     blockAdsEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+
+  if (hideGrokChromeEl) {
+    hideGrokChromeEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ hideGrokChrome: !!hideGrokChromeEl.checked });
     });
   }
 }
