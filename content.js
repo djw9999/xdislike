@@ -421,6 +421,74 @@ function showGrokChrome() {
   });
 }
 
+// ---- @grok posts hiding (Grok author + @grok summons) ----
+const GROK_POST_HIDDEN_CLASS = 'quietx-grok-post-hidden';
+
+function hideGrokPosts() {
+  if (!isHideGrokPostsEnabled) return;
+
+  const articles = document.querySelectorAll('article[data-testid="tweet"]');
+  articles.forEach(article => {
+    if (article.classList.contains(GROK_POST_HIDDEN_CLASS)) return;
+    if (isInsideCompose(article)) return;
+
+    if (isGrokAuthor(article) || hasGrokMention(article)) {
+      article.classList.add(GROK_POST_HIDDEN_CLASS);
+    }
+  });
+}
+
+function showGrokPosts() {
+  document.querySelectorAll('.' + GROK_POST_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(GROK_POST_HIDDEN_CLASS);
+  });
+}
+
+function isGrokAuthor(article) {
+  if (!(article instanceof HTMLElement)) return false;
+
+  const userNameContainer = article.querySelector('[data-testid="User-Name"]');
+  if (userNameContainer) {
+    const handleLinks = userNameContainer.querySelectorAll('a[href]');
+    for (const link of handleLinks) {
+      const href = link.getAttribute('href') || '';
+      if (href === '/grok' || href === '/Grok') return true;
+    }
+  }
+
+  const avatarLink = article.querySelector('a[href="/grok"], a[href="/Grok"]');
+  if (avatarLink) {
+    const isInUserArea = avatarLink.closest('[data-testid="User-Name"]') ||
+                         avatarLink.closest('[data-testid="Tweet-User-Avatar"]');
+    if (isInUserArea) return true;
+  }
+
+  return false;
+}
+
+function hasGrokMention(article) {
+  if (!(article instanceof HTMLElement)) return false;
+
+  const tweetText = article.querySelector('[data-testid="tweetText"]');
+  if (!tweetText) return false;
+
+  const mentionLinks = tweetText.querySelectorAll('a[href]');
+  for (const link of mentionLinks) {
+    const href = link.getAttribute('href') || '';
+    if (href === '/grok' || href === '/Grok') return true;
+  }
+
+  return false;
+}
+
+function isInsideCompose(el) {
+  if (!el) return false;
+  return !!el.closest('[data-testid="tweetTextarea_0"]') ||
+         !!el.closest('[data-testid="toolBar"]') ||
+         !!el.closest('[aria-label="Compose tweet"]') ||
+         !!el.closest('[role="dialog"][aria-modal="true"]');
+}
+
 function isInsideTweet(el) {
   if (!el) return false;
   return !!el.closest('article[data-testid="tweet"]');
@@ -902,6 +970,7 @@ let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
 let isHideGrokChromeEnabled = false; // State for Grok/Premium chrome hiding
+let isHideGrokPostsEnabled = false; // State for hiding @grok posts and Grok author posts
 
 // Toggle focus cleanup mode.
 document.addEventListener("keydown", (e) => {
@@ -1487,6 +1556,18 @@ function init() {
           }
       });
 
+      // Load Hide Grok Posts preference (Pro only, default ON)
+      chrome.storage.local.get(['isPro', 'hideGrokPosts'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideGrokPostsEnabled = r.hideGrokPosts !== false;
+              if (isHideGrokPostsEnabled) {
+                  console.log("X Dislike: Grok Posts Hiding Enabled 🔇");
+                  hideGrokPosts();
+              }
+          }
+      });
+
       // Watch for storage changes (Dynamic Toggle)
       chrome.storage.onChanged.addListener((changes, area) => {
           if (area !== 'local') return;
@@ -1521,6 +1602,22 @@ function init() {
                   }
               });
           }
+
+          if (changes.hideGrokPosts || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideGrokPosts'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideGrokPostsEnabled;
+                  isHideGrokPostsEnabled = isPro && r.hideGrokPosts !== false;
+                  
+                  console.log("X Dislike: Hide Grok Posts switched to:", isHideGrokPostsEnabled);
+                  
+                  if (isHideGrokPostsEnabled && !wasEnabled) {
+                      hideGrokPosts();
+                  } else if (!isHideGrokPostsEnabled && wasEnabled) {
+                      showGrokPosts();
+                  }
+              });
+          }
       });
 
       // Watch for new posts (infinite scroll)
@@ -1528,6 +1625,9 @@ function init() {
         initializePosts();
         if (isHideGrokChromeEnabled) {
           hideGrokChrome();
+        }
+        if (isHideGrokPostsEnabled) {
+          hideGrokPosts();
         }
       }, 2000);
 

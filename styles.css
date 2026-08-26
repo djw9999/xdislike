@@ -1004,3 +1004,8 @@ input:checked+.slider:before {
 .quietx-grok-hidden {
   display: none !important;
 }
+
+/* ---- @grok posts hiding ---- */
+.quietx-grok-post-hidden {
+  display: none !important;
+}

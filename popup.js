@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let statusResetTimer = null;
 
 function restoreState() {
-  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds', 'isPro', 'hideGrokChrome'], (result) => {
+  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds', 'isPro', 'hideGrokChrome', 'hideGrokPosts'], (result) => {
     updateUI();
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
@@ -27,6 +27,21 @@ function restoreState() {
         hideGrokChromeEl.disabled = true;
         hideGrokChromeCard.classList.add('locked');
         hideGrokChromeEl.checked = false;
+      }
+    }
+
+    const hideGrokPostsEl = document.getElementById('hide-grok-posts');
+    const hideGrokPostsCard = document.getElementById('hide-grok-posts-card');
+
+    if (hideGrokPostsEl && hideGrokPostsCard) {
+      if (isPro) {
+        hideGrokPostsEl.disabled = false;
+        hideGrokPostsCard.classList.remove('locked');
+        hideGrokPostsEl.checked = result.hideGrokPosts !== false;
+      } else {
+        hideGrokPostsEl.disabled = true;
+        hideGrokPostsCard.classList.add('locked');
+        hideGrokPostsEl.checked = false;
       }
     }
   });
@@ -66,6 +81,7 @@ function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
   const hideGrokChromeEl = document.getElementById('hide-grok-chrome');
+  const hideGrokPostsEl = document.getElementById('hide-grok-posts');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -82,6 +98,12 @@ function wireSettings() {
   if (hideGrokChromeEl) {
     hideGrokChromeEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ hideGrokChrome: !!hideGrokChromeEl.checked });
+    });
+  }
+
+  if (hideGrokPostsEl) {
+    hideGrokPostsEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ hideGrokPosts: !!hideGrokPostsEl.checked });
     });
   }
 }
