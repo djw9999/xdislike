@@ -36,7 +36,7 @@ async function validateLicenseKey(key) {
 }
 
 function restoreState() {
-  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds'], (result) => {
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'pinFollowing'], (result) => {
     const hasStoredGrant = result.licenseKey && result.isPro;
 
     if (hasStoredGrant) {
@@ -68,6 +68,15 @@ function restoreState() {
         blockAdsEl.checked = result.blockAds !== false;
       } else {
         blockAdsEl.checked = !!result.blockAds;
+      }
+    }
+
+    const pinFollowingEl = document.getElementById('pin-following');
+    if (pinFollowingEl) {
+      if (hasStoredGrant) {
+        pinFollowingEl.checked = result.pinFollowing !== false;
+      } else {
+        pinFollowingEl.checked = !!result.pinFollowing;
       }
     }
   });
@@ -143,16 +152,23 @@ function wireLicenseActivation() {
       const validation = await validateLicenseKey(key);
 
       if (validation.valid) {
-        const current = await chrome.storage.local.get(['blockAds']);
+        const current = await chrome.storage.local.get(['blockAds', 'pinFollowing']);
         const updates = { licenseKey: key, isPro: true };
         if (current.blockAds === undefined) {
           updates.blockAds = true;
+        }
+        if (current.pinFollowing === undefined) {
+          updates.pinFollowing = true;
         }
         await chrome.storage.local.set(updates);
         updateUI(true);
         const blockAdsEl = document.getElementById('block-ads');
         if (blockAdsEl) {
           blockAdsEl.checked = current.blockAds !== false;
+        }
+        const pinFollowingEl = document.getElementById('pin-following');
+        if (pinFollowingEl) {
+          pinFollowingEl.checked = current.pinFollowing !== false;
         }
         setStatus('ACTIVATED', false, 2000);
       } else {
@@ -175,6 +191,7 @@ function wireLicenseActivation() {
 function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
+  const pinFollowingEl = document.getElementById('pin-following');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -185,6 +202,12 @@ function wireSettings() {
   if (blockAdsEl) {
     blockAdsEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+
+  if (pinFollowingEl) {
+    pinFollowingEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ pinFollowing: !!pinFollowingEl.checked });
     });
   }
 }

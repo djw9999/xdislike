@@ -796,6 +796,9 @@ function escapeHtmlAttr(str) {
 let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
+let isPinFollowingEnabled = false; // State for pin following
+let pinFollowingObserver = null;
+let pinFollowingDegraded = false; // Track if we've already logged degradation
 
 // Toggle focus cleanup mode.
 document.addEventListener("keydown", (e) => {
@@ -1353,6 +1356,109 @@ async function handleTwitterDislike(tweetElement) {
   }
 }
 
+// ---- Pin Following feature ----
+function isOnHomePage() {
+  const path = window.location.pathname;
+  return path === '/home' || path === '/' || path === '';
+}
+
+function findTimelineTabs() {
+  const tablists = document.querySelectorAll('[role="tablist"]');
+  for (const tablist of tablists) {
+    const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+    if (tabs.length < 2) continue;
+    
+    const firstLabel = getTabLabel(tabs[0]);
+    const secondLabel = getTabLabel(tabs[1]);
+    
+    if (isForYouLabel(firstLabel) && isFollowingLabel(secondLabel)) {
+      return { forYouTab: tabs[0], followingTab: tabs[1], tablist };
+    }
+    if (isFollowingLabel(firstLabel) && isForYouLabel(secondLabel)) {
+      return { forYouTab: tabs[1], followingTab: tabs[0], tablist };
+    }
+  }
+  return null;
+}
+
+function isTabSelected(tab) {
+  if (!(tab instanceof HTMLElement)) return false;
+  return tab.getAttribute('aria-selected') === 'true' || tab.tabIndex === 0;
+}
+
+function clickFollowingIfNeeded() {
+  if (!isPinFollowingEnabled) return;
+  if (!isOnHomePage()) return;
+  
+  const tabs = findTimelineTabs();
+  if (!tabs) {
+    if (!pinFollowingDegraded) {
+      console.log("Better X: Pin Following degraded - tabs not found");
+      pinFollowingDegraded = true;
+    }
+    return;
+  }
+  
+  const { forYouTab, followingTab } = tabs;
+  
+  if (isTabSelected(forYouTab) && !isTabSelected(followingTab)) {
+    followingTab.click();
+    console.log("Better X: Clicked Following tab");
+  }
+}
+
+function setupPinFollowingObserver() {
+  if (pinFollowingObserver) {
+    pinFollowingObserver.disconnect();
+    pinFollowingObserver = null;
+  }
+  
+  if (!isPinFollowingEnabled) return;
+  if (!isOnHomePage()) return;
+  
+  clickFollowingIfNeeded();
+  
+  pinFollowingObserver = new MutationObserver(() => {
+    if (!isPinFollowingEnabled) {
+      pinFollowingObserver.disconnect();
+      pinFollowingObserver = null;
+      return;
+    }
+    clickFollowingIfNeeded();
+  });
+  
+  pinFollowingObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['aria-selected']
+  });
+}
+
+function initPinFollowing() {
+  chrome.storage.local.get(['pinFollowing'], (r) => {
+    isPinFollowingEnabled = r.pinFollowing !== false;
+    if (isPinFollowingEnabled) {
+      console.log("Better X: Pin Following Enabled");
+      setupPinFollowingObserver();
+    }
+  });
+  
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.pinFollowing !== undefined) {
+      isPinFollowingEnabled = !!changes.pinFollowing.newValue;
+      console.log("Better X: Pin Following switched to:", isPinFollowingEnabled);
+      pinFollowingDegraded = false;
+      if (isPinFollowingEnabled) {
+        setupPinFollowingObserver();
+      } else if (pinFollowingObserver) {
+        pinFollowingObserver.disconnect();
+        pinFollowingObserver = null;
+      }
+    }
+  });
+}
+
 // Initialize
 function init() {
   chrome.storage.local.get(
@@ -1367,6 +1473,7 @@ function init() {
       initTweetHistory();
       createRecycleBin();
       initializePosts();
+      initPinFollowing();
 
       // Load Ad Blocking preference (Pro: ON unless explicitly false)
       chrome.storage.local.get(['blockAds'], (r) => {
