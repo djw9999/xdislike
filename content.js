@@ -1356,9 +1356,14 @@ async function handleTwitterDislike(tweetElement) {
 // Initialize
 function init() {
   chrome.storage.local.get(
-    ["mergeCommunityTabs", "lastCommunityTabLabel"],
+    ["isPro", "mergeCommunityTabs", "lastCommunityTabLabel"],
     (result) => {
-      console.log("X Dislike: Initializing...");
+      if (!result.isPro) {
+        console.log("Better X: No active license. Please activate in the extension popup.");
+        return;
+      }
+
+      console.log("Better X: License active. Initializing...");
       initTweetHistory();
       createRecycleBin();
       initializePosts();
@@ -1366,14 +1371,14 @@ function init() {
       // Load Ad Blocking preference
       chrome.storage.local.get(['blockAds'], (r) => {
           isAdBlockingEnabled = !!r.blockAds;
-          if (isAdBlockingEnabled) console.log("X Dislike: Ad Blocking Enabled 🛡️");
+          if (isAdBlockingEnabled) console.log("Better X: Ad Blocking Enabled");
       });
 
       // Watch for storage changes (Dynamic Toggle)
       chrome.storage.onChanged.addListener((changes, area) => {
           if (area === 'local' && changes.blockAds) {
               isAdBlockingEnabled = !!changes.blockAds.newValue;
-              console.log("X Dislike: Ad Blocking switched to:", isAdBlockingEnabled);
+              console.log("Better X: Ad Blocking switched to:", isAdBlockingEnabled);
               if (isAdBlockingEnabled) {
                    // Re-run to hide existing
                    initializePosts();

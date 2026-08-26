@@ -168,7 +168,7 @@
     }
 
     #main-features {
-      display: grid;
+      display: none;
       gap: 10px;
       margin-top: 12px;
     }
@@ -393,6 +393,79 @@
       font-size: 12px;
       line-height: 1.4;
     }
+
+    #activation-form {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.035)),
+        rgba(15, 20, 25, 0.82);
+      box-shadow: var(--shadow);
+    }
+
+    .activation-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 850;
+    }
+
+    .activation-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    #license-key {
+      width: 100%;
+      height: 42px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(0, 0, 0, 0.24);
+      color: var(--text);
+      outline: none;
+      padding: 0 12px;
+    }
+
+    #license-key:focus {
+      border-color: rgba(29, 155, 240, 0.55);
+      box-shadow: 0 0 0 3px rgba(29, 155, 240, 0.16);
+    }
+
+    #activate-btn,
+    .license-link {
+      width: 100%;
+      min-height: 40px;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    #activate-btn {
+      cursor: pointer;
+      color: #ffffff;
+      background: var(--blue);
+      box-shadow: 0 0 24px rgba(29, 155, 240, 0.26);
+    }
+
+    #activate-btn:disabled {
+      opacity: 0.7;
+      cursor: progress;
+    }
+
+    .license-link {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+    }
   </style>
 </head>
 
@@ -407,7 +480,7 @@
             <p class="tagline">Local cleanup tools for a less noisy X feed.</p>
           </div>
         </div>
-        <div class="status-pill" id="ready-status">READY</div>
+        <div class="status-pill locked" id="ready-status">LOCKED</div>
       </div>
 
       <div class="quick-stats" aria-label="Feature summary">
@@ -425,6 +498,16 @@
         </div>
       </div>
     </section>
+
+    <div id="activation-form">
+      <p class="activation-title">Unlock Better X</p>
+      <p class="activation-copy">Activate your license to enable mini window, hide promoted posts, merge communities, and drag-to-hide cleanup.</p>
+      <input type="text" id="license-key" placeholder="Enter license key">
+      <button id="activate-btn" type="button">Activate License</button>
+      <a class="license-link" href="https://buy.polar.sh/polar_cl_neMM1dkLgWb98LERCr90GLW3UNQ6W5cF7CzxI3LYMQg" target="_blank">
+        Get a License
+      </a>
+    </div>
 
     <div id="main-features">
       <div class="section-label">
