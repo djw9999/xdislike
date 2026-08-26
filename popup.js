@@ -24,31 +24,40 @@ async function validateLicenseKey(key) {
     });
 
     if (!response.ok) {
-      return { valid: false, error: 'Network error or invalid request' };
+      return { valid: false, error: 'network', message: 'Network error or invalid request' };
     }
 
     const data = await response.json();
     return { valid: data.status === 'granted', data };
   } catch (error) {
     console.error('License validation error:', error);
-    return { valid: false, error: error.message };
+    return { valid: false, error: 'network', message: error.message };
   }
 }
 
-async function restoreState() {
-  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds'], async (result) => {
-    let isPro = false;
+function restoreState() {
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds'], (result) => {
+    const hasStoredGrant = result.licenseKey && result.isPro;
 
-    if (result.licenseKey && result.isPro) {
-      const validation = await validateLicenseKey(result.licenseKey);
-      if (validation.valid) {
-        isPro = true;
-      } else {
-        await chrome.storage.local.set({ isPro: false });
-      }
+    if (hasStoredGrant) {
+      updateUI(true);
+
+      validateLicenseKey(result.licenseKey).then((validation) => {
+        if (validation.valid) {
+          return;
+        }
+
+        if (validation.error === 'network') {
+          return;
+        }
+
+        chrome.storage.local.set({ isPro: false }, () => {
+          updateUI(false);
+        });
+      });
+    } else {
+      updateUI(false);
     }
-
-    updateUI(isPro);
 
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
@@ -131,7 +140,11 @@ function wireLicenseActivation() {
         updateUI(true);
         setStatus('ACTIVATED', false, 2000);
       } else {
-        setStatus('INVALID KEY', true, 3000);
+        if (validation.error === 'network') {
+          setStatus('OFFLINE', true, 3000);
+        } else {
+          setStatus('INVALID KEY', true, 3000);
+        }
       }
     } catch (error) {
       console.error(error);
