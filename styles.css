@@ -999,3 +999,18 @@ input:checked+.slider:before {
     box-shadow: 0 0 0 18px rgba(29, 155, 240, 0.0);
   }
 }
+
+/* ---- Grok/Premium Chrome Hiding ---- */
+.quietx-grok-hidden {
+  display: none !important;
+}
+
+/* ---- @grok posts hiding ---- */
+.quietx-grok-post-hidden {
+  display: none !important;
+}
+
+/* ---- Discover more / More from this author hiding ---- */
+.quietx-discover-more-hidden {
+  display: none !important;
+}

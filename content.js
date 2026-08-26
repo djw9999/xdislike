@@ -321,6 +321,219 @@ function isAd(element) {
   return false;
 }
 
+// ---- Grok/Premium chrome hiding ----
+const GROK_CHROME_HIDDEN_CLASS = 'quietx-grok-hidden';
+
+function hideGrokChrome() {
+  if (!isHideGrokChromeEnabled) return;
+
+  // Left sidebar nav: Grok entry
+  // Look for nav links containing "Grok" text or aria-label
+  const navLinks = document.querySelectorAll('nav a[href*="/i/grok"], nav a[aria-label*="Grok"], nav a[aria-label*="grok"]');
+  navLinks.forEach(el => {
+    const navItem = el.closest('[role="listitem"]') || el.closest('div[data-testid]')?.parentElement || el;
+    if (navItem && !navItem.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+      navItem.classList.add(GROK_CHROME_HIDDEN_CLASS);
+    }
+  });
+
+  // Also check for nav items with Grok text content (more flexible selector)
+  document.querySelectorAll('nav [role="link"]').forEach(link => {
+    const text = (link.textContent || '').toLowerCase();
+    if (text.includes('grok') && !text.includes('@grok')) {
+      const navItem = link.closest('[role="listitem"]') || link;
+      if (!navItem.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+        navItem.classList.add(GROK_CHROME_HIDDEN_CLASS);
+      }
+    }
+  });
+
+  // Right sidebar: Grok promo sections, Premium upsell boxes
+  // These typically appear in the sidebar column with promotional content
+  const sidebarColumn = document.querySelector('[data-testid="sidebarColumn"]');
+  if (sidebarColumn) {
+    // Find sections promoting Grok or Premium
+    sidebarColumn.querySelectorAll('[aria-label*="Grok"], [aria-label*="Premium"], [aria-label*="Subscribe"]').forEach(el => {
+      const section = el.closest('aside') || el.closest('section') || el.closest('[data-testid]');
+      if (section && !isInsideTweet(section) && !section.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+        section.classList.add(GROK_CHROME_HIDDEN_CLASS);
+      }
+    });
+
+    // Look for "Try Grok" or "Get Premium" style promo boxes
+    sidebarColumn.querySelectorAll('a[href*="/i/grok"], a[href*="/i/premium"], a[href*="premium_sign_up"], a[href*="/i/verified"]').forEach(link => {
+      const promoBox = link.closest('aside') || link.closest('section') || link.closest('[data-testid="sidebarColumn"] > div > div');
+      if (promoBox && !isInsideTweet(promoBox) && !promoBox.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+        promoBox.classList.add(GROK_CHROME_HIDDEN_CLASS);
+      }
+    });
+  }
+
+  // Full-screen Premium/Grok upsell modals and overlays
+  // These are typically modal dialogs with Premium/Grok promotion
+  document.querySelectorAll('[role="dialog"], [aria-modal="true"]').forEach(modal => {
+    const text = (modal.textContent || '').toLowerCase();
+    const hasGrokPromo = text.includes('grok') && !text.includes('@grok');
+    const hasPremiumPromo = (
+      text.includes('premium') ||
+      text.includes('subscribe') ||
+      text.includes('upgrade') ||
+      text.includes('verified')
+    ) && (
+      text.includes('unlock') ||
+      text.includes('get premium') ||
+      text.includes('subscribe to') ||
+      text.includes('try premium')
+    );
+
+    if ((hasGrokPromo || hasPremiumPromo) && !modal.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+      modal.classList.add(GROK_CHROME_HIDDEN_CLASS);
+    }
+  });
+
+  // Grok buttons in header/compose area (upsell buttons, not the tweet composer)
+  // These are typically sparkle/star icons promoting Grok AI
+  document.querySelectorAll('[data-testid*="grok"], [aria-label*="Grok"]').forEach(el => {
+    // Skip if inside a tweet article (don't hide @grok content)
+    if (isInsideTweet(el)) return;
+    // Skip if it's the main compose box
+    if (el.closest('[data-testid="tweetTextarea_0"]')) return;
+    if (el.closest('[data-testid="toolBar"]')) return;
+
+    // Target Grok upsell buttons (often in header or floating)
+    if (!el.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+      el.classList.add(GROK_CHROME_HIDDEN_CLASS);
+    }
+  });
+
+  // Hide Grok drawer/side panel if it exists
+  document.querySelectorAll('[data-testid="GrokDrawer"], [aria-label="Grok drawer"]').forEach(el => {
+    if (!el.classList.contains(GROK_CHROME_HIDDEN_CLASS)) {
+      el.classList.add(GROK_CHROME_HIDDEN_CLASS);
+    }
+  });
+}
+
+function showGrokChrome() {
+  // Remove the hidden class from all elements we previously hid
+  document.querySelectorAll('.' + GROK_CHROME_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(GROK_CHROME_HIDDEN_CLASS);
+  });
+}
+
+// ---- @grok posts hiding (Grok author + @grok summons) ----
+const GROK_POST_HIDDEN_CLASS = 'quietx-grok-post-hidden';
+
+// ---- Discover more / More from this author hiding ----
+const DISCOVER_MORE_HIDDEN_CLASS = 'quietx-discover-more-hidden';
+
+function hideDiscoverMore() {
+  if (!isHideDiscoverMoreEnabled) return;
+
+  const cells = document.querySelectorAll('[data-testid="cellInnerDiv"]');
+  cells.forEach(cell => {
+    if (!(cell instanceof HTMLElement)) return;
+    if (cell.classList.contains(DISCOVER_MORE_HIDDEN_CLASS)) return;
+
+    if (cell.querySelector('article[data-testid="tweet"]')) return;
+
+    const textContent = cell.textContent || '';
+    const textLower = textContent.toLowerCase();
+
+    const isDiscoverMore = 
+      textLower.includes('discover more') ||
+      textLower.includes('发现更多');
+
+    const isMoreFromAuthor = 
+      /more from (this author|@[\w]+)/i.test(textContent) ||
+      textLower.includes('more from this author') ||
+      /来自.*更多/i.test(textContent);
+
+    if (isDiscoverMore || isMoreFromAuthor) {
+      cell.classList.add(DISCOVER_MORE_HIDDEN_CLASS);
+      cell.style.setProperty('display', 'none', 'important');
+    }
+  });
+}
+
+function showDiscoverMore() {
+  document.querySelectorAll('.' + DISCOVER_MORE_HIDDEN_CLASS).forEach(el => {
+    if (!(el instanceof HTMLElement)) return;
+    el.classList.remove(DISCOVER_MORE_HIDDEN_CLASS);
+    el.style.removeProperty('display');
+  });
+}
+
+function hideGrokPosts() {
+  if (!isHideGrokPostsEnabled) return;
+
+  const articles = document.querySelectorAll('article[data-testid="tweet"]');
+  articles.forEach(article => {
+    if (article.classList.contains(GROK_POST_HIDDEN_CLASS)) return;
+    if (isInsideCompose(article)) return;
+
+    if (isGrokAuthor(article) || hasGrokMention(article)) {
+      article.classList.add(GROK_POST_HIDDEN_CLASS);
+    }
+  });
+}
+
+function showGrokPosts() {
+  document.querySelectorAll('.' + GROK_POST_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(GROK_POST_HIDDEN_CLASS);
+  });
+}
+
+function isGrokAuthor(article) {
+  if (!(article instanceof HTMLElement)) return false;
+
+  const userNameContainer = article.querySelector('[data-testid="User-Name"]');
+  if (userNameContainer) {
+    const handleLinks = userNameContainer.querySelectorAll('a[href]');
+    for (const link of handleLinks) {
+      const href = link.getAttribute('href') || '';
+      if (href === '/grok' || href === '/Grok') return true;
+    }
+  }
+
+  const avatarLink = article.querySelector('a[href="/grok"], a[href="/Grok"]');
+  if (avatarLink) {
+    const isInUserArea = avatarLink.closest('[data-testid="User-Name"]') ||
+                         avatarLink.closest('[data-testid="Tweet-User-Avatar"]');
+    if (isInUserArea) return true;
+  }
+
+  return false;
+}
+
+function hasGrokMention(article) {
+  if (!(article instanceof HTMLElement)) return false;
+
+  const tweetText = article.querySelector('[data-testid="tweetText"]');
+  if (!tweetText) return false;
+
+  const mentionLinks = tweetText.querySelectorAll('a[href]');
+  for (const link of mentionLinks) {
+    const href = link.getAttribute('href') || '';
+    if (href === '/grok' || href === '/Grok') return true;
+  }
+
+  return false;
+}
+
+function isInsideCompose(el) {
+  if (!el) return false;
+  return !!el.closest('[data-testid="tweetTextarea_0"]') ||
+         !!el.closest('[data-testid="toolBar"]') ||
+         !!el.closest('[aria-label="Compose tweet"]') ||
+         !!el.closest('[role="dialog"][aria-modal="true"]');
+}
+
+function isInsideTweet(el) {
+  if (!el) return false;
+  return !!el.closest('article[data-testid="tweet"]');
+}
+
 // ---- Tweet history (loaded-in-feed) ----
 const QUIETX_HISTORY_STORAGE_KEY = "historyTweets";
 const QUIETX_HISTORY_MAX_ITEMS = 80;
@@ -796,6 +1009,9 @@ function escapeHtmlAttr(str) {
 let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
+let isHideGrokChromeEnabled = false; // State for Grok/Premium chrome hiding
+let isHideGrokPostsEnabled = false; // State for hiding @grok posts and Grok author posts
+let isHideDiscoverMoreEnabled = false; // State for hiding Discover more / More from this author
 
 // Toggle focus cleanup mode.
 document.addEventListener("keydown", (e) => {
@@ -1369,9 +1585,47 @@ function init() {
           if (isAdBlockingEnabled) console.log("X Dislike: Ad Blocking Enabled 🛡️");
       });
 
+      // Load Hide Grok Chrome preference (Pro only, default ON)
+      chrome.storage.local.get(['isPro', 'hideGrokChrome'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideGrokChromeEnabled = r.hideGrokChrome !== false;
+              if (isHideGrokChromeEnabled) {
+                  console.log("X Dislike: Grok Chrome Hiding Enabled ✨");
+                  hideGrokChrome();
+              }
+          }
+      });
+
+      // Load Hide Grok Posts preference (Pro only, default ON)
+      chrome.storage.local.get(['isPro', 'hideGrokPosts'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideGrokPostsEnabled = r.hideGrokPosts !== false;
+              if (isHideGrokPostsEnabled) {
+                  console.log("X Dislike: Grok Posts Hiding Enabled 🔇");
+                  hideGrokPosts();
+              }
+          }
+      });
+
+      // Load Hide Discover More preference (Pro only, default ON)
+      chrome.storage.local.get(['isPro', 'hideDiscoverMore'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideDiscoverMoreEnabled = r.hideDiscoverMore !== false;
+              if (isHideDiscoverMoreEnabled) {
+                  console.log("X Dislike: Discover More Hiding Enabled 🔇");
+                  hideDiscoverMore();
+              }
+          }
+      });
+
       // Watch for storage changes (Dynamic Toggle)
       chrome.storage.onChanged.addListener((changes, area) => {
-          if (area === 'local' && changes.blockAds) {
+          if (area !== 'local') return;
+
+          if (changes.blockAds) {
               isAdBlockingEnabled = !!changes.blockAds.newValue;
               console.log("X Dislike: Ad Blocking switched to:", isAdBlockingEnabled);
               if (isAdBlockingEnabled) {
@@ -1379,18 +1633,75 @@ function init() {
                    initializePosts();
               } else {
                   // Show all hidden ads
-                 // This is a bit heavy, we need to find all posts that ARE ads and show them.
-                 // Since we modify styles directly, we can just find all articles with style display none.
                  const hiddenAds = document.querySelectorAll('article[style*="display: none"]');
                  hiddenAds.forEach(el => {
                      if (isAd(el)) el.style.display = "";
                  });
               }
           }
+
+          if (changes.hideGrokChrome || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideGrokChrome'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideGrokChromeEnabled;
+                  isHideGrokChromeEnabled = isPro && r.hideGrokChrome !== false;
+                  
+                  console.log("X Dislike: Hide Grok Chrome switched to:", isHideGrokChromeEnabled);
+                  
+                  if (isHideGrokChromeEnabled && !wasEnabled) {
+                      hideGrokChrome();
+                  } else if (!isHideGrokChromeEnabled && wasEnabled) {
+                      showGrokChrome();
+                  }
+              });
+          }
+
+          if (changes.hideGrokPosts || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideGrokPosts'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideGrokPostsEnabled;
+                  isHideGrokPostsEnabled = isPro && r.hideGrokPosts !== false;
+                  
+                  console.log("X Dislike: Hide Grok Posts switched to:", isHideGrokPostsEnabled);
+                  
+                  if (isHideGrokPostsEnabled && !wasEnabled) {
+                      hideGrokPosts();
+                  } else if (!isHideGrokPostsEnabled && wasEnabled) {
+                      showGrokPosts();
+                  }
+              });
+          }
+
+          if (changes.hideDiscoverMore || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideDiscoverMore'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideDiscoverMoreEnabled;
+                  isHideDiscoverMoreEnabled = isPro && r.hideDiscoverMore !== false;
+                  
+                  console.log("X Dislike: Hide Discover More switched to:", isHideDiscoverMoreEnabled);
+                  
+                  if (isHideDiscoverMoreEnabled && !wasEnabled) {
+                      hideDiscoverMore();
+                  } else if (!isHideDiscoverMoreEnabled && wasEnabled) {
+                      showDiscoverMore();
+                  }
+              });
+          }
       });
 
       // Watch for new posts (infinite scroll)
-      setInterval(initializePosts, 2000);
+      setInterval(() => {
+        initializePosts();
+        if (isHideGrokChromeEnabled) {
+          hideGrokChrome();
+        }
+        if (isHideGrokPostsEnabled) {
+          hideGrokPosts();
+        }
+        if (isHideDiscoverMoreEnabled) {
+          hideDiscoverMore();
+        }
+      }, 2000);
 
       lastCommunityTabLabel =
         typeof result.lastCommunityTabLabel === "string"

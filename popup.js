@@ -7,12 +7,58 @@ document.addEventListener('DOMContentLoaded', () => {
 let statusResetTimer = null;
 
 function restoreState() {
-  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds'], (result) => {
+  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds', 'isPro', 'hideGrokChrome', 'hideGrokPosts', 'hideDiscoverMore'], (result) => {
     updateUI();
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
     const blockAdsEl = document.getElementById('block-ads');
     if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+
+    const isPro = !!result.isPro;
+    const hideGrokChromeEl = document.getElementById('hide-grok-chrome');
+    const hideGrokChromeCard = document.getElementById('hide-grok-chrome-card');
+
+    if (hideGrokChromeEl && hideGrokChromeCard) {
+      if (isPro) {
+        hideGrokChromeEl.disabled = false;
+        hideGrokChromeCard.classList.remove('locked');
+        hideGrokChromeEl.checked = result.hideGrokChrome !== false;
+      } else {
+        hideGrokChromeEl.disabled = true;
+        hideGrokChromeCard.classList.add('locked');
+        hideGrokChromeEl.checked = false;
+      }
+    }
+
+    const hideGrokPostsEl = document.getElementById('hide-grok-posts');
+    const hideGrokPostsCard = document.getElementById('hide-grok-posts-card');
+
+    if (hideGrokPostsEl && hideGrokPostsCard) {
+      if (isPro) {
+        hideGrokPostsEl.disabled = false;
+        hideGrokPostsCard.classList.remove('locked');
+        hideGrokPostsEl.checked = result.hideGrokPosts !== false;
+      } else {
+        hideGrokPostsEl.disabled = true;
+        hideGrokPostsCard.classList.add('locked');
+        hideGrokPostsEl.checked = false;
+      }
+    }
+
+    const hideDiscoverMoreEl = document.getElementById('hide-discover-more');
+    const hideDiscoverMoreCard = document.getElementById('hide-discover-more-card');
+
+    if (hideDiscoverMoreEl && hideDiscoverMoreCard) {
+      if (isPro) {
+        hideDiscoverMoreEl.disabled = false;
+        hideDiscoverMoreCard.classList.remove('locked');
+        hideDiscoverMoreEl.checked = result.hideDiscoverMore !== false;
+      } else {
+        hideDiscoverMoreEl.disabled = true;
+        hideDiscoverMoreCard.classList.add('locked');
+        hideDiscoverMoreEl.checked = false;
+      }
+    }
   });
 }
 
@@ -49,6 +95,9 @@ function setStatus(label, locked = false, resetAfterMs = 0) {
 function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
+  const hideGrokChromeEl = document.getElementById('hide-grok-chrome');
+  const hideGrokPostsEl = document.getElementById('hide-grok-posts');
+  const hideDiscoverMoreEl = document.getElementById('hide-discover-more');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -59,6 +108,24 @@ function wireSettings() {
   if (blockAdsEl) {
     blockAdsEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+
+  if (hideGrokChromeEl) {
+    hideGrokChromeEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ hideGrokChrome: !!hideGrokChromeEl.checked });
+    });
+  }
+
+  if (hideGrokPostsEl) {
+    hideGrokPostsEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ hideGrokPosts: !!hideGrokPostsEl.checked });
+    });
+  }
+
+  if (hideDiscoverMoreEl) {
+    hideDiscoverMoreEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ hideDiscoverMore: !!hideDiscoverMoreEl.checked });
     });
   }
 }

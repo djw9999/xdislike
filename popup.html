@@ -383,6 +383,35 @@
       transform: translateX(18px);
     }
 
+    .toggle-card.locked {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .toggle-card.locked .toggle-ui {
+      cursor: not-allowed;
+    }
+
+    .pro-badge {
+      display: none;
+      position: absolute;
+      right: 58px;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, rgba(255, 215, 0, 0.22), rgba(255, 180, 0, 0.18));
+      border: 1px solid rgba(255, 215, 0, 0.35);
+      color: #ffd700;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .toggle-card.locked .pro-badge {
+      display: block;
+    }
+
     .helper-note {
       margin: 12px 0 0;
       padding: 12px 14px;
@@ -482,6 +511,36 @@
           </span>
           <input type="checkbox" id="merge-community-tabs">
           <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card" id="hide-grok-chrome-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide Grok and Premium promo</span>
+            <span class="toggle-desc">Remove Grok buttons, drawers, and Premium upsells.</span>
+          </span>
+          <input type="checkbox" id="hide-grok-chrome" disabled>
+          <span class="toggle-ui" aria-hidden="true"></span>
+          <span class="pro-badge" id="grok-pro-badge">PRO</span>
+        </label>
+
+        <label class="toggle-card" id="hide-grok-posts-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide @grok posts</span>
+            <span class="toggle-desc">Hide posts that summon @grok or are authored by Grok.</span>
+          </span>
+          <input type="checkbox" id="hide-grok-posts" disabled>
+          <span class="toggle-ui" aria-hidden="true"></span>
+          <span class="pro-badge" id="grok-posts-pro-badge">PRO</span>
+        </label>
+
+        <label class="toggle-card" id="hide-discover-more-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide Discover more</span>
+            <span class="toggle-desc">Hide "Discover more" and "More from this author" under replies.</span>
+          </span>
+          <input type="checkbox" id="hide-discover-more" disabled>
+          <span class="toggle-ui" aria-hidden="true"></span>
+          <span class="pro-badge" id="discover-more-pro-badge">PRO</span>
         </label>
       </div>
     </div>
