@@ -1357,7 +1357,7 @@ async function handleTwitterDislike(tweetElement) {
 
 // ---- Pin Following feature ----
 let userChoseForYou = false;
-let lastHomePath = null;
+let pinRetryTimer = null;
 
 function isOnHomePage() {
   const path = window.location.pathname;
@@ -1388,10 +1388,17 @@ function isTabSelected(tab) {
   return tab.getAttribute('aria-selected') === 'true' || tab.tabIndex === 0;
 }
 
-function pinFollowingOnEntry() {
-  if (!isPinFollowingEnabled) return;
-  if (!isOnHomePage()) return;
-  if (userChoseForYou) return;
+function stopPinRetry() {
+  if (pinRetryTimer) {
+    clearInterval(pinRetryTimer);
+    pinRetryTimer = null;
+  }
+}
+
+function tryPinFollowing() {
+  if (!isPinFollowingEnabled) return false;
+  if (!isOnHomePage()) return false;
+  if (userChoseForYou) return false;
   
   const tabs = findTimelineTabs();
   if (!tabs) {
@@ -1399,15 +1406,50 @@ function pinFollowingOnEntry() {
       console.log("Better X: Pin Following degraded - tabs not found");
       pinFollowingDegraded = true;
     }
-    return;
+    return false;
   }
   
   const { forYouTab, followingTab } = tabs;
   
-  if (isTabSelected(forYouTab) && !isTabSelected(followingTab)) {
-    followingTab.click();
-    console.log("Better X: Pinned to Following on home entry");
+  if (isTabSelected(followingTab)) {
+    return true;
   }
+  
+  if (isTabSelected(forYouTab)) {
+    followingTab.click();
+    console.log("Better X: Clicked Following tab");
+  }
+  
+  return false;
+}
+
+function startPinFollowingOnEntry() {
+  stopPinRetry();
+  
+  if (!isPinFollowingEnabled) return;
+  if (!isOnHomePage()) return;
+  if (userChoseForYou) return;
+  
+  let attempts = 0;
+  const maxAttempts = 15;
+  
+  pinRetryTimer = setInterval(() => {
+    attempts++;
+    
+    if (!isPinFollowingEnabled || !isOnHomePage() || userChoseForYou) {
+      stopPinRetry();
+      return;
+    }
+    
+    const pinned = tryPinFollowing();
+    
+    if (pinned || attempts >= maxAttempts) {
+      stopPinRetry();
+      if (pinned) {
+        console.log("Better X: Following pinned after", attempts, "attempts");
+      }
+    }
+  }, 200);
 }
 
 function setupForYouClickListener() {
@@ -1422,6 +1464,7 @@ function setupForYouClickListener() {
     
     if (forYouTab.contains(e.target) || e.target === forYouTab) {
       userChoseForYou = true;
+      stopPinRetry();
       console.log("Better X: User clicked For You, pin suspended");
     }
     
@@ -1441,10 +1484,12 @@ function setupNavigationListener() {
       const wasOnHome = currentPath === '/home' || currentPath === '/' || currentPath === '';
       const nowOnHome = newPath === '/home' || newPath === '/' || newPath === '';
       
-      if (!wasOnHome && nowOnHome) {
+      if (nowOnHome && !wasOnHome) {
         userChoseForYou = false;
         pinFollowingDegraded = false;
-        setTimeout(pinFollowingOnEntry, 500);
+        startPinFollowingOnEntry();
+      } else if (!nowOnHome) {
+        stopPinRetry();
       }
       
       currentPath = newPath;
@@ -1466,7 +1511,7 @@ function initPinFollowing() {
       console.log("Better X: Pin Following Enabled");
       setupForYouClickListener();
       setupNavigationListener();
-      setTimeout(pinFollowingOnEntry, 500);
+      startPinFollowingOnEntry();
     }
   });
   
@@ -1477,7 +1522,9 @@ function initPinFollowing() {
       pinFollowingDegraded = false;
       userChoseForYou = false;
       if (isPinFollowingEnabled && isOnHomePage()) {
-        setTimeout(pinFollowingOnEntry, 100);
+        startPinFollowingOnEntry();
+      } else {
+        stopPinRetry();
       }
     }
   });
