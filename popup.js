@@ -2,28 +2,106 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreState();
   wireMiniWindowButtons();
   wireSettings();
+  wireLicenseActivation();
 });
+
+const POLAR_ORG_ID = 'bf5e3e6c-d148-45fc-b3e0-c5594d693edb';
+const POLAR_VALIDATE_URL = 'https://api.polar.sh/v1/customer-portal/license-keys/validate';
 
 let statusResetTimer = null;
 
+async function validateLicenseKey(key) {
+  try {
+    const response = await fetch(POLAR_VALIDATE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        key: key,
+        organization_id: POLAR_ORG_ID
+      })
+    });
+
+    if (!response.ok) {
+      return { valid: false, error: 'network', message: 'Network error or invalid request' };
+    }
+
+    const data = await response.json();
+    return { valid: data.status === 'granted', data };
+  } catch (error) {
+    console.error('License validation error:', error);
+    return { valid: false, error: 'network', message: error.message };
+  }
+}
+
 function restoreState() {
-  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds'], (result) => {
-    updateUI();
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'pinFollowing'], (result) => {
+    const hasStoredGrant = result.licenseKey && result.isPro;
+
+    if (hasStoredGrant) {
+      updateUI(true);
+
+      validateLicenseKey(result.licenseKey).then((validation) => {
+        if (validation.valid) {
+          return;
+        }
+
+        if (validation.error === 'network') {
+          return;
+        }
+
+        chrome.storage.local.set({ isPro: false }, () => {
+          updateUI(false);
+        });
+      });
+    } else {
+      updateUI(false);
+    }
+
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
+
     const blockAdsEl = document.getElementById('block-ads');
-    if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+    if (blockAdsEl) {
+      if (hasStoredGrant) {
+        blockAdsEl.checked = result.blockAds !== false;
+      } else {
+        blockAdsEl.checked = !!result.blockAds;
+      }
+    }
+
+    const pinFollowingEl = document.getElementById('pin-following');
+    if (pinFollowingEl) {
+      if (hasStoredGrant) {
+        pinFollowingEl.checked = result.pinFollowing !== false;
+      } else {
+        pinFollowingEl.checked = !!result.pinFollowing;
+      }
+    }
   });
 }
 
-function updateUI() {
+function updateUI(isPro) {
+  const form = document.getElementById('activation-form');
   const features = document.getElementById('main-features');
+  const status = document.getElementById('ready-status');
 
-  if (features) {
-    features.style.display = 'grid';
+  if (isPro) {
+    if (form) form.style.display = 'none';
+    if (features) features.style.display = 'grid';
+    if (status) {
+      status.innerText = 'PRO';
+      status.classList.remove('locked');
+    }
+  } else {
+    if (form) form.style.display = 'grid';
+    if (features) features.style.display = 'none';
+    if (status) {
+      status.innerText = 'LOCKED';
+      status.classList.add('locked');
+    }
   }
-
-  setStatus('READY');
 }
 
 function setStatus(label, locked = false, resetAfterMs = 0) {
@@ -41,14 +119,79 @@ function setStatus(label, locked = false, resetAfterMs = 0) {
   if (resetAfterMs > 0) {
     statusResetTimer = window.setTimeout(() => {
       statusResetTimer = null;
-      setStatus('READY');
+      chrome.storage.local.get(['isPro'], (result) => {
+        if (result.isPro) {
+          status.innerText = 'PRO';
+          status.classList.remove('locked');
+        } else {
+          status.innerText = 'LOCKED';
+          status.classList.add('locked');
+        }
+      });
     }, resetAfterMs);
   }
+}
+
+function wireLicenseActivation() {
+  const activateBtn = document.getElementById('activate-btn');
+  if (!activateBtn) return;
+
+  activateBtn.addEventListener('click', async () => {
+    const keyInput = document.getElementById('license-key');
+    const key = keyInput ? keyInput.value.trim() : '';
+
+    if (!key) {
+      setStatus('ENTER KEY', true, 2000);
+      return;
+    }
+
+    activateBtn.innerText = 'Verifying...';
+    activateBtn.disabled = true;
+
+    try {
+      const validation = await validateLicenseKey(key);
+
+      if (validation.valid) {
+        const current = await chrome.storage.local.get(['blockAds', 'pinFollowing']);
+        const updates = { licenseKey: key, isPro: true };
+        if (current.blockAds === undefined) {
+          updates.blockAds = true;
+        }
+        if (current.pinFollowing === undefined) {
+          updates.pinFollowing = true;
+        }
+        await chrome.storage.local.set(updates);
+        updateUI(true);
+        const blockAdsEl = document.getElementById('block-ads');
+        if (blockAdsEl) {
+          blockAdsEl.checked = current.blockAds !== false;
+        }
+        const pinFollowingEl = document.getElementById('pin-following');
+        if (pinFollowingEl) {
+          pinFollowingEl.checked = current.pinFollowing !== false;
+        }
+        setStatus('ACTIVATED', false, 2000);
+      } else {
+        if (validation.error === 'network') {
+          setStatus('OFFLINE', true, 3000);
+        } else {
+          setStatus('INVALID KEY', true, 3000);
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus('ERROR', true, 3000);
+    } finally {
+      activateBtn.innerText = 'Activate License';
+      activateBtn.disabled = false;
+    }
+  });
 }
 
 function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
+  const pinFollowingEl = document.getElementById('pin-following');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -59,6 +202,12 @@ function wireSettings() {
   if (blockAdsEl) {
     blockAdsEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+
+  if (pinFollowingEl) {
+    pinFollowingEl.addEventListener('change', async () => {
+      await chrome.storage.local.set({ pinFollowing: !!pinFollowingEl.checked });
     });
   }
 }
