@@ -797,7 +797,6 @@ let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
 let isPinFollowingEnabled = false; // State for pin following
-let pinFollowingObserver = null;
 let pinFollowingDegraded = false; // Track if we've already logged degradation
 
 // Toggle focus cleanup mode.
@@ -1357,6 +1356,9 @@ async function handleTwitterDislike(tweetElement) {
 }
 
 // ---- Pin Following feature ----
+let userChoseForYou = false;
+let lastHomePath = null;
+
 function isOnHomePage() {
   const path = window.location.pathname;
   return path === '/home' || path === '/' || path === '';
@@ -1386,9 +1388,10 @@ function isTabSelected(tab) {
   return tab.getAttribute('aria-selected') === 'true' || tab.tabIndex === 0;
 }
 
-function clickFollowingIfNeeded() {
+function pinFollowingOnEntry() {
   if (!isPinFollowingEnabled) return;
   if (!isOnHomePage()) return;
+  if (userChoseForYou) return;
   
   const tabs = findTimelineTabs();
   if (!tabs) {
@@ -1403,35 +1406,56 @@ function clickFollowingIfNeeded() {
   
   if (isTabSelected(forYouTab) && !isTabSelected(followingTab)) {
     followingTab.click();
-    console.log("Better X: Clicked Following tab");
+    console.log("Better X: Pinned to Following on home entry");
   }
 }
 
-function setupPinFollowingObserver() {
-  if (pinFollowingObserver) {
-    pinFollowingObserver.disconnect();
-    pinFollowingObserver = null;
-  }
-  
-  if (!isPinFollowingEnabled) return;
-  if (!isOnHomePage()) return;
-  
-  clickFollowingIfNeeded();
-  
-  pinFollowingObserver = new MutationObserver(() => {
-    if (!isPinFollowingEnabled) {
-      pinFollowingObserver.disconnect();
-      pinFollowingObserver = null;
-      return;
+function setupForYouClickListener() {
+  document.addEventListener('click', (e) => {
+    if (!isPinFollowingEnabled) return;
+    if (!isOnHomePage()) return;
+    
+    const tabs = findTimelineTabs();
+    if (!tabs) return;
+    
+    const { forYouTab, followingTab } = tabs;
+    
+    if (forYouTab.contains(e.target) || e.target === forYouTab) {
+      userChoseForYou = true;
+      console.log("Better X: User clicked For You, pin suspended");
     }
-    clickFollowingIfNeeded();
-  });
+    
+    if (followingTab.contains(e.target) || e.target === followingTab) {
+      userChoseForYou = false;
+      console.log("Better X: User clicked Following, pin resumed");
+    }
+  }, true);
+}
+
+function setupNavigationListener() {
+  let currentPath = window.location.pathname;
   
-  pinFollowingObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['aria-selected']
+  const checkNavigation = () => {
+    const newPath = window.location.pathname;
+    if (newPath !== currentPath) {
+      const wasOnHome = currentPath === '/home' || currentPath === '/' || currentPath === '';
+      const nowOnHome = newPath === '/home' || newPath === '/' || newPath === '';
+      
+      if (!wasOnHome && nowOnHome) {
+        userChoseForYou = false;
+        pinFollowingDegraded = false;
+        setTimeout(pinFollowingOnEntry, 500);
+      }
+      
+      currentPath = newPath;
+    }
+  };
+  
+  const observer = new MutationObserver(checkNavigation);
+  observer.observe(document.body, { childList: true, subtree: true });
+  
+  window.addEventListener('popstate', () => {
+    setTimeout(checkNavigation, 100);
   });
 }
 
@@ -1440,7 +1464,9 @@ function initPinFollowing() {
     isPinFollowingEnabled = r.pinFollowing !== false;
     if (isPinFollowingEnabled) {
       console.log("Better X: Pin Following Enabled");
-      setupPinFollowingObserver();
+      setupForYouClickListener();
+      setupNavigationListener();
+      setTimeout(pinFollowingOnEntry, 500);
     }
   });
   
@@ -1449,11 +1475,9 @@ function initPinFollowing() {
       isPinFollowingEnabled = !!changes.pinFollowing.newValue;
       console.log("Better X: Pin Following switched to:", isPinFollowingEnabled);
       pinFollowingDegraded = false;
-      if (isPinFollowingEnabled) {
-        setupPinFollowingObserver();
-      } else if (pinFollowingObserver) {
-        pinFollowingObserver.disconnect();
-        pinFollowingObserver = null;
+      userChoseForYou = false;
+      if (isPinFollowingEnabled && isOnHomePage()) {
+        setTimeout(pinFollowingOnEntry, 100);
       }
     }
   });
