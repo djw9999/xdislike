@@ -1368,9 +1368,9 @@ function init() {
       createRecycleBin();
       initializePosts();
 
-      // Load Ad Blocking preference
+      // Load Ad Blocking preference (Pro: ON unless explicitly false)
       chrome.storage.local.get(['blockAds'], (r) => {
-          isAdBlockingEnabled = !!r.blockAds;
+          isAdBlockingEnabled = r.blockAds !== false;
           if (isAdBlockingEnabled) console.log("Better X: Ad Blocking Enabled");
       });
 

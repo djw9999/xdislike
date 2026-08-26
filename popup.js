@@ -61,8 +61,15 @@ function restoreState() {
 
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
+
     const blockAdsEl = document.getElementById('block-ads');
-    if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+    if (blockAdsEl) {
+      if (hasStoredGrant) {
+        blockAdsEl.checked = result.blockAds !== false;
+      } else {
+        blockAdsEl.checked = !!result.blockAds;
+      }
+    }
   });
 }
 
@@ -136,8 +143,17 @@ function wireLicenseActivation() {
       const validation = await validateLicenseKey(key);
 
       if (validation.valid) {
-        await chrome.storage.local.set({ licenseKey: key, isPro: true });
+        const current = await chrome.storage.local.get(['blockAds']);
+        const updates = { licenseKey: key, isPro: true };
+        if (current.blockAds === undefined) {
+          updates.blockAds = true;
+        }
+        await chrome.storage.local.set(updates);
         updateUI(true);
+        const blockAdsEl = document.getElementById('block-ads');
+        if (blockAdsEl) {
+          blockAdsEl.checked = current.blockAds !== false;
+        }
         setStatus('ACTIVATED', false, 2000);
       } else {
         if (validation.error === 'network') {
