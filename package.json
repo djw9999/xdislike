@@ -1,0 +1,16 @@
+{
+  "name": "better-x-extension",
+  "version": "1.0.8",
+  "description": "Hide promoted posts locally and clean up desktop X in fewer clicks",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
