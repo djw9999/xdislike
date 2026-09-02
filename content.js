@@ -797,6 +797,106 @@ let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
 
+// ---- Hide Tweet Grok Icon (Pro feature) ----
+const TWEET_GROK_ICON_HIDDEN_CLASS = 'quietx-tweet-grok-hidden';
+let isHideTweetGrokIconEnabled = false;
+let hideTweetGrokIconObserver = null;
+
+function nodeContainsCaretOrMore(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.matches('[data-testid="caret"]')) return true;
+  if (el.querySelector('[data-testid="caret"]')) return true;
+  const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+  if (ariaLabel === 'more' || ariaLabel === '更多') return true;
+  return false;
+}
+
+function nodeContainsSocialActions(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[role="group"]')) return true;
+  if (el.matches('[role="group"]')) return true;
+  if (el.querySelector('[data-testid="reply"]')) return true;
+  if (el.querySelector('[data-testid="retweet"]')) return true;
+  if (el.querySelector('[data-testid="like"]')) return true;
+  if (el.querySelector('[data-testid="bookmark"]')) return true;
+  return false;
+}
+
+function nodeContainsUserInfo(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[data-testid="User-Name"]')) return true;
+  if (el.querySelector('[data-testid="UserAvatar-Container-unknown"]')) return true;
+  if (el.querySelector('time')) return true;
+  return false;
+}
+
+function nodeContainsTweetText(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[data-testid="tweetText"]')) return true;
+  return false;
+}
+
+function nodeIsInNavOrSidebar(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.closest('nav')) return true;
+  if (el.closest('[data-testid="sidebarColumn"]')) return true;
+  return false;
+}
+
+function isTweetGrokIconControl(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (nodeContainsCaretOrMore(el)) return false;
+  if (nodeContainsSocialActions(el)) return false;
+  if (nodeContainsUserInfo(el)) return false;
+  if (nodeContainsTweetText(el)) return false;
+  if (nodeIsInNavOrSidebar(el)) return false;
+  const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+  if (ariaLabel !== 'grok actions') return false;
+  const article = el.closest('article[data-testid="tweet"]');
+  if (!article) return false;
+  return true;
+}
+
+function hideTweetGrokIconNode(el) {
+  if (!(el instanceof HTMLElement)) return;
+  if (nodeContainsCaretOrMore(el)) return;
+  if (el.classList.contains(TWEET_GROK_ICON_HIDDEN_CLASS)) return;
+  el.classList.add(TWEET_GROK_ICON_HIDDEN_CLASS);
+}
+
+function hideTweetGrokIcons() {
+  if (!isHideTweetGrokIconEnabled) return;
+  const grokButtons = document.querySelectorAll('article[data-testid="tweet"] button[aria-label="Grok actions"]');
+  grokButtons.forEach(btn => {
+    if (isTweetGrokIconControl(btn)) {
+      hideTweetGrokIconNode(btn);
+    }
+  });
+}
+
+function showTweetGrokIcons() {
+  document.querySelectorAll('.' + TWEET_GROK_ICON_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(TWEET_GROK_ICON_HIDDEN_CLASS);
+  });
+}
+
+function setupHideTweetGrokIconObserver() {
+  if (hideTweetGrokIconObserver) return;
+  hideTweetGrokIconObserver = new MutationObserver(() => {
+    if (isHideTweetGrokIconEnabled) {
+      hideTweetGrokIcons();
+    }
+  });
+  hideTweetGrokIconObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function teardownHideTweetGrokIconObserver() {
+  if (hideTweetGrokIconObserver) {
+    hideTweetGrokIconObserver.disconnect();
+    hideTweetGrokIconObserver = null;
+  }
+}
+
 // Toggle focus cleanup mode.
 document.addEventListener("keydown", (e) => {
   // Alt+S (or Option+S) to toggle
@@ -1369,9 +1469,24 @@ function init() {
           if (isAdBlockingEnabled) console.log("X Dislike: Ad Blocking Enabled 🛡️");
       });
 
+      // Load Hide Tweet Grok Icon preference (Pro only, default ON for Pro)
+      chrome.storage.local.get(['isPro', 'hideTweetGrokIcon'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideTweetGrokIconEnabled = r.hideTweetGrokIcon !== false;
+              if (isHideTweetGrokIconEnabled) {
+                  console.log("X Dislike: Hide Tweet Grok Icon Enabled ✨");
+                  hideTweetGrokIcons();
+                  setupHideTweetGrokIconObserver();
+              }
+          }
+      });
+
       // Watch for storage changes (Dynamic Toggle)
       chrome.storage.onChanged.addListener((changes, area) => {
-          if (area === 'local' && changes.blockAds) {
+          if (area !== 'local') return;
+
+          if (changes.blockAds) {
               isAdBlockingEnabled = !!changes.blockAds.newValue;
               console.log("X Dislike: Ad Blocking switched to:", isAdBlockingEnabled);
               if (isAdBlockingEnabled) {
@@ -1379,13 +1494,29 @@ function init() {
                    initializePosts();
               } else {
                   // Show all hidden ads
-                 // This is a bit heavy, we need to find all posts that ARE ads and show them.
-                 // Since we modify styles directly, we can just find all articles with style display none.
                  const hiddenAds = document.querySelectorAll('article[style*="display: none"]');
                  hiddenAds.forEach(el => {
                      if (isAd(el)) el.style.display = "";
                  });
               }
+          }
+
+          if (changes.hideTweetGrokIcon || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideTweetGrokIcon'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideTweetGrokIconEnabled;
+                  isHideTweetGrokIconEnabled = isPro && r.hideTweetGrokIcon !== false;
+
+                  console.log("X Dislike: Hide Tweet Grok Icon switched to:", isHideTweetGrokIconEnabled);
+
+                  if (isHideTweetGrokIconEnabled && !wasEnabled) {
+                      hideTweetGrokIcons();
+                      setupHideTweetGrokIconObserver();
+                  } else if (!isHideTweetGrokIconEnabled && wasEnabled) {
+                      showTweetGrokIcons();
+                      teardownHideTweetGrokIconObserver();
+                  }
+              });
           }
       });
 

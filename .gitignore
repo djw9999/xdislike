@@ -1,7 +1,1 @@
-promotion_loop/accounts.json
-promotion_loop/.env
-promotion_loop/.env.*
-!promotion_loop/secrets.example.env
-__pycache__/
-*.pyc
-
+node_modules/

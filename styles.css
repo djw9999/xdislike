@@ -999,3 +999,8 @@ input:checked+.slider:before {
     box-shadow: 0 0 0 18px rgba(29, 155, 240, 0.0);
   }
 }
+
+/* ---- Hide Tweet Grok Icon (Pro feature) ---- */
+.quietx-tweet-grok-hidden {
+  display: none !important;
+}
