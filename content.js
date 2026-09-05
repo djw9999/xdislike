@@ -797,6 +797,223 @@ let isFocusCleanupMode = false;
 let clearedPostCount = 0;
 let isAdBlockingEnabled = false; // State for ad blocking
 
+// ---- Pin Following feature (1.0.17) ----
+let pinFollowingColdPin = false;
+let pinFollowingUserClickedForYou = false;
+let pinFollowingPinCount = 0;
+let pinFollowingMaxPins = 2;
+let pinFollowingLoadTime = 0;
+let pinFollowingSpaFlipGuardMs = 12000;
+let pinFollowingEnabled = true;
+
+function isOnHomePage() {
+  const path = window.location.pathname;
+  return path === '/home' || path === '/' || path === '/home/';
+}
+
+function getTimelineTabs() {
+  const tablist = document.querySelector('[role="tablist"]');
+  if (!tablist) return null;
+  const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+  if (tabs.length < 2) return null;
+  
+  const forYouTab = tabs.find(t => isForYouLabel(getTabLabel(t)));
+  const followingTab = tabs.find(t => isFollowingLabel(getTabLabel(t)));
+  
+  if (!forYouTab || !followingTab) return null;
+  return { forYouTab, followingTab, tablist };
+}
+
+function isTabSelected(tab) {
+  if (!(tab instanceof HTMLElement)) return false;
+  return tab.getAttribute('aria-selected') === 'true';
+}
+
+function clickFollowingTab() {
+  const tabs = getTimelineTabs();
+  if (!tabs) return false;
+  
+  if (!isTabSelected(tabs.forYouTab) || isTabSelected(tabs.followingTab)) {
+    return false;
+  }
+  
+  if (pinFollowingPinCount >= pinFollowingMaxPins) {
+    return false;
+  }
+  
+  pinFollowingPinCount++;
+  tabs.followingTab.click();
+  console.log('Pin Following: Clicked Following tab (count:', pinFollowingPinCount, ')');
+  return true;
+}
+
+function setupPinFollowing() {
+  if (!pinFollowingEnabled) return;
+  if (!isOnHomePage()) return;
+  
+  pinFollowingColdPin = false;
+  pinFollowingUserClickedForYou = false;
+  pinFollowingPinCount = 0;
+  pinFollowingLoadTime = Date.now();
+  
+  const checkAndPin = () => {
+    if (!isOnHomePage()) return;
+    if (pinFollowingUserClickedForYou) return;
+    
+    const tabs = getTimelineTabs();
+    if (!tabs) {
+      setTimeout(checkAndPin, 500);
+      return;
+    }
+    
+    tabs.forYouTab.addEventListener('click', () => {
+      pinFollowingUserClickedForYou = true;
+      console.log('Pin Following: User clicked For you, disabling re-pin');
+    }, { once: true });
+    
+    if (isTabSelected(tabs.forYouTab) && !isTabSelected(tabs.followingTab)) {
+      clickFollowingTab();
+      pinFollowingColdPin = true;
+    }
+  };
+  
+  if (document.readyState === 'complete') {
+    setTimeout(checkAndPin, 300);
+  } else {
+    window.addEventListener('load', () => setTimeout(checkAndPin, 300), { once: true });
+  }
+  
+  setupPinFollowingSpaGuard();
+}
+
+function setupPinFollowingSpaGuard() {
+  let lastCheck = 0;
+  const observer = new MutationObserver(() => {
+    if (!pinFollowingEnabled) return;
+    if (!isOnHomePage()) return;
+    if (pinFollowingUserClickedForYou) return;
+    if (pinFollowingPinCount >= pinFollowingMaxPins) return;
+    
+    const now = Date.now();
+    if (now - lastCheck < 500) return;
+    lastCheck = now;
+    
+    const timeSinceLoad = now - pinFollowingLoadTime;
+    if (timeSinceLoad > pinFollowingSpaFlipGuardMs && pinFollowingColdPin) {
+      const tabs = getTimelineTabs();
+      if (tabs && isTabSelected(tabs.forYouTab) && !isTabSelected(tabs.followingTab)) {
+        console.log('Pin Following: SPA flipped back to For you, re-pinning Following');
+        clickFollowingTab();
+      }
+    }
+  });
+  
+  const observeTarget = document.body || document.documentElement;
+  if (observeTarget) {
+    observer.observe(observeTarget, { childList: true, subtree: true });
+  }
+}
+
+// ---- Hide Tweet Grok Icon (Pro feature, 1.0.18) ----
+const TWEET_GROK_ICON_HIDDEN_CLASS = 'quietx-tweet-grok-hidden';
+let isHideTweetGrokIconEnabled = false;
+let hideTweetGrokIconObserver = null;
+
+function nodeContainsCaretOrMore(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.matches('[data-testid="caret"]')) return true;
+  if (el.querySelector('[data-testid="caret"]')) return true;
+  const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+  if (ariaLabel === 'more' || ariaLabel === '更多') return true;
+  return false;
+}
+
+function nodeContainsSocialActions(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[role="group"]')) return true;
+  if (el.matches('[role="group"]')) return true;
+  if (el.querySelector('[data-testid="reply"]')) return true;
+  if (el.querySelector('[data-testid="retweet"]')) return true;
+  if (el.querySelector('[data-testid="like"]')) return true;
+  if (el.querySelector('[data-testid="bookmark"]')) return true;
+  return false;
+}
+
+function nodeContainsUserInfo(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[data-testid="User-Name"]')) return true;
+  if (el.querySelector('[data-testid="UserAvatar-Container-unknown"]')) return true;
+  if (el.querySelector('time')) return true;
+  return false;
+}
+
+function nodeContainsTweetText(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.querySelector('[data-testid="tweetText"]')) return true;
+  return false;
+}
+
+function nodeIsInNavOrSidebar(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.closest('nav')) return true;
+  if (el.closest('[data-testid="sidebarColumn"]')) return true;
+  return false;
+}
+
+function isTweetGrokIconControl(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if (nodeContainsCaretOrMore(el)) return false;
+  if (nodeContainsSocialActions(el)) return false;
+  if (nodeContainsUserInfo(el)) return false;
+  if (nodeContainsTweetText(el)) return false;
+  if (nodeIsInNavOrSidebar(el)) return false;
+  const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+  if (ariaLabel !== 'grok actions') return false;
+  const article = el.closest('article[data-testid="tweet"]');
+  if (!article) return false;
+  return true;
+}
+
+function hideTweetGrokIconNode(el) {
+  if (!(el instanceof HTMLElement)) return;
+  if (nodeContainsCaretOrMore(el)) return;
+  if (el.classList.contains(TWEET_GROK_ICON_HIDDEN_CLASS)) return;
+  el.classList.add(TWEET_GROK_ICON_HIDDEN_CLASS);
+}
+
+function hideTweetGrokIcons() {
+  if (!isHideTweetGrokIconEnabled) return;
+  const grokButtons = document.querySelectorAll('article[data-testid="tweet"] button[aria-label="Grok actions"]');
+  grokButtons.forEach(btn => {
+    if (isTweetGrokIconControl(btn)) {
+      hideTweetGrokIconNode(btn);
+    }
+  });
+}
+
+function showTweetGrokIcons() {
+  document.querySelectorAll('.' + TWEET_GROK_ICON_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(TWEET_GROK_ICON_HIDDEN_CLASS);
+  });
+}
+
+function setupHideTweetGrokIconObserver() {
+  if (hideTweetGrokIconObserver) return;
+  hideTweetGrokIconObserver = new MutationObserver(() => {
+    if (isHideTweetGrokIconEnabled) {
+      hideTweetGrokIcons();
+    }
+  });
+  hideTweetGrokIconObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function teardownHideTweetGrokIconObserver() {
+  if (hideTweetGrokIconObserver) {
+    hideTweetGrokIconObserver.disconnect();
+    hideTweetGrokIconObserver = null;
+  }
+}
+
 // Toggle focus cleanup mode.
 document.addEventListener("keydown", (e) => {
   // Alt+S (or Option+S) to toggle
@@ -1356,7 +1573,7 @@ async function handleTwitterDislike(tweetElement) {
 // Initialize
 function init() {
   chrome.storage.local.get(
-    ["mergeCommunityTabs", "lastCommunityTabLabel"],
+    ["mergeCommunityTabs", "lastCommunityTabLabel", "pinFollowing"],
     (result) => {
       console.log("X Dislike: Initializing...");
       initTweetHistory();
@@ -1369,9 +1586,31 @@ function init() {
           if (isAdBlockingEnabled) console.log("X Dislike: Ad Blocking Enabled 🛡️");
       });
 
+      // Load Hide Tweet Grok Icon preference (Pro only, default ON for Pro)
+      chrome.storage.local.get(['isPro', 'hideTweetGrokIcon'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isHideTweetGrokIconEnabled = r.hideTweetGrokIcon !== false;
+              if (isHideTweetGrokIconEnabled) {
+                  console.log("X Dislike: Hide Tweet Grok Icon Enabled ✨");
+                  hideTweetGrokIcons();
+                  setupHideTweetGrokIconObserver();
+              }
+          }
+      });
+
+      // Pin Following feature (default ON, 1.0.17)
+      pinFollowingEnabled = result.pinFollowing !== false;
+      if (pinFollowingEnabled) {
+          console.log("X Dislike: Pin Following Enabled 📌");
+          setupPinFollowing();
+      }
+
       // Watch for storage changes (Dynamic Toggle)
       chrome.storage.onChanged.addListener((changes, area) => {
-          if (area === 'local' && changes.blockAds) {
+          if (area !== 'local') return;
+
+          if (changes.blockAds) {
               isAdBlockingEnabled = !!changes.blockAds.newValue;
               console.log("X Dislike: Ad Blocking switched to:", isAdBlockingEnabled);
               if (isAdBlockingEnabled) {
@@ -1379,12 +1618,36 @@ function init() {
                    initializePosts();
               } else {
                   // Show all hidden ads
-                 // This is a bit heavy, we need to find all posts that ARE ads and show them.
-                 // Since we modify styles directly, we can just find all articles with style display none.
                  const hiddenAds = document.querySelectorAll('article[style*="display: none"]');
                  hiddenAds.forEach(el => {
                      if (isAd(el)) el.style.display = "";
                  });
+              }
+          }
+
+          if (changes.hideTweetGrokIcon || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'hideTweetGrokIcon'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isHideTweetGrokIconEnabled;
+                  isHideTweetGrokIconEnabled = isPro && r.hideTweetGrokIcon !== false;
+
+                  console.log("X Dislike: Hide Tweet Grok Icon switched to:", isHideTweetGrokIconEnabled);
+
+                  if (isHideTweetGrokIconEnabled && !wasEnabled) {
+                      hideTweetGrokIcons();
+                      setupHideTweetGrokIconObserver();
+                  } else if (!isHideTweetGrokIconEnabled && wasEnabled) {
+                      showTweetGrokIcons();
+                      teardownHideTweetGrokIconObserver();
+                  }
+              });
+          }
+
+          if (changes.pinFollowing) {
+              pinFollowingEnabled = changes.pinFollowing.newValue !== false;
+              console.log("X Dislike: Pin Following switched to:", pinFollowingEnabled);
+              if (pinFollowingEnabled) {
+                  setupPinFollowing();
               }
           }
       });

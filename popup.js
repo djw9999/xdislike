@@ -2,28 +2,123 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreState();
   wireMiniWindowButtons();
   wireSettings();
+  wireLicenseActivation();
 });
+
+const POLAR_ORG_ID = 'bf5e3e6c-d148-45fc-b3e0-c5594d693edb';
+const POLAR_VALIDATE_URL = 'https://api.polar.sh/v1/customer-portal/license-keys/validate';
 
 let statusResetTimer = null;
 
+async function validateLicenseKey(key) {
+  try {
+    const response = await fetch(POLAR_VALIDATE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        key: key,
+        organization_id: POLAR_ORG_ID
+      })
+    });
+
+    if (!response.ok) {
+      return { valid: false, error: 'network', message: 'Network error or invalid request' };
+    }
+
+    const data = await response.json();
+    return { valid: data.status === 'granted', data };
+  } catch (error) {
+    console.error('License validation error:', error);
+    return { valid: false, error: 'network', message: error.message };
+  }
+}
+
 function restoreState() {
-  chrome.storage.local.get(['mergeCommunityTabs', 'blockAds'], (result) => {
-    updateUI();
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon'], (result) => {
+    const hasStoredGrant = result.licenseKey && result.isPro;
+
+    if (hasStoredGrant) {
+      updateUI(true);
+
+      validateLicenseKey(result.licenseKey).then((validation) => {
+        if (validation.valid) {
+          return;
+        }
+
+        if (validation.error === 'network') {
+          return;
+        }
+
+        chrome.storage.local.set({ isPro: false }, () => {
+          updateUI(false);
+        });
+      });
+    } else {
+      updateUI(false);
+    }
+
     const mergeEl = document.getElementById('merge-community-tabs');
     if (mergeEl) mergeEl.checked = !!result.mergeCommunityTabs;
+
     const blockAdsEl = document.getElementById('block-ads');
     if (blockAdsEl) blockAdsEl.checked = !!result.blockAds;
+
+    const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+    if (hideTweetGrokIconEl) {
+      if (hasStoredGrant) {
+        hideTweetGrokIconEl.checked = result.hideTweetGrokIcon !== false;
+      } else {
+        hideTweetGrokIconEl.checked = false;
+        hideTweetGrokIconEl.disabled = true;
+      }
+    }
   });
 }
 
-function updateUI() {
+function updateUI(isPro) {
+  const form = document.getElementById('activation-form');
   const features = document.getElementById('main-features');
+  const status = document.getElementById('ready-status');
+  const proToggleCards = document.querySelectorAll('.toggle-card.pro-feature');
+  const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
 
-  if (features) {
-    features.style.display = 'grid';
+  if (isPro) {
+    if (form) form.style.display = 'none';
+    if (features) features.style.display = 'grid';
+    if (status) {
+      status.innerText = 'PRO';
+      status.classList.remove('locked');
+    }
+    proToggleCards.forEach(card => {
+      card.classList.remove('locked');
+      const input = card.querySelector('input');
+      if (input) input.disabled = false;
+    });
+    if (hideTweetGrokIconEl) {
+      hideTweetGrokIconEl.disabled = false;
+    }
+  } else {
+    if (form) form.style.display = 'grid';
+    if (features) features.style.display = 'grid';
+    if (status) {
+      status.innerText = 'LOCKED';
+      status.classList.add('locked');
+    }
+    proToggleCards.forEach(card => {
+      card.classList.add('locked');
+      const input = card.querySelector('input');
+      if (input) {
+        input.disabled = true;
+        input.checked = false;
+      }
+    });
+    if (hideTweetGrokIconEl) {
+      hideTweetGrokIconEl.disabled = true;
+      hideTweetGrokIconEl.checked = false;
+    }
   }
-
-  setStatus('READY');
 }
 
 function setStatus(label, locked = false, resetAfterMs = 0) {
@@ -41,14 +136,72 @@ function setStatus(label, locked = false, resetAfterMs = 0) {
   if (resetAfterMs > 0) {
     statusResetTimer = window.setTimeout(() => {
       statusResetTimer = null;
-      setStatus('READY');
+      chrome.storage.local.get(['isPro'], (result) => {
+        if (result.isPro) {
+          status.innerText = 'PRO';
+          status.classList.remove('locked');
+        } else {
+          status.innerText = 'LOCKED';
+          status.classList.add('locked');
+        }
+      });
     }, resetAfterMs);
   }
+}
+
+function wireLicenseActivation() {
+  const activateBtn = document.getElementById('activate-btn');
+  if (!activateBtn) return;
+
+  activateBtn.addEventListener('click', async () => {
+    const keyInput = document.getElementById('license-key');
+    const key = keyInput ? keyInput.value.trim() : '';
+
+    if (!key) {
+      setStatus('ENTER KEY', true, 2000);
+      return;
+    }
+
+    activateBtn.innerText = 'Verifying...';
+    activateBtn.disabled = true;
+
+    try {
+      const validation = await validateLicenseKey(key);
+
+      if (validation.valid) {
+        const current = await chrome.storage.local.get(['hideTweetGrokIcon']);
+        const updates = { licenseKey: key, isPro: true };
+        if (current.hideTweetGrokIcon === undefined) {
+          updates.hideTweetGrokIcon = true;
+        }
+        await chrome.storage.local.set(updates);
+        updateUI(true);
+        const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+        if (hideTweetGrokIconEl) {
+          hideTweetGrokIconEl.checked = current.hideTweetGrokIcon !== false;
+        }
+        setStatus('ACTIVATED', false, 2000);
+      } else {
+        if (validation.error === 'network') {
+          setStatus('OFFLINE', true, 3000);
+        } else {
+          setStatus('INVALID KEY', true, 3000);
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus('ERROR', true, 3000);
+    } finally {
+      activateBtn.innerText = 'Activate License';
+      activateBtn.disabled = false;
+    }
+  });
 }
 
 function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
+  const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -59,6 +212,19 @@ function wireSettings() {
   if (blockAdsEl) {
     blockAdsEl.addEventListener('change', async () => {
       await chrome.storage.local.set({ blockAds: !!blockAdsEl.checked });
+    });
+  }
+
+  if (hideTweetGrokIconEl) {
+    hideTweetGrokIconEl.addEventListener('change', async () => {
+      const isPro = await new Promise(resolve => {
+        chrome.storage.local.get(['isPro'], r => resolve(!!r.isPro));
+      });
+      if (!isPro) {
+        hideTweetGrokIconEl.checked = false;
+        return;
+      }
+      await chrome.storage.local.set({ hideTweetGrokIcon: !!hideTweetGrokIconEl.checked });
     });
   }
 }
