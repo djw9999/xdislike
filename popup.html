@@ -393,6 +393,83 @@
       font-size: 12px;
       line-height: 1.4;
     }
+
+    #activation-form {
+      display: none;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid rgba(255, 255, 255, 0.075);
+    }
+
+    #activation-form .form-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    #activation-form .form-desc {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    #activation-form input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    #activation-form input[type="text"]::placeholder {
+      color: var(--muted);
+    }
+
+    #activation-form button {
+      width: 100%;
+      padding: 10px 16px;
+      border-radius: 10px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: background 140ms ease;
+    }
+
+    #activation-form button:hover {
+      background: #1a8cd8;
+    }
+
+    #activation-form button:disabled {
+      background: rgba(255, 255, 255, 0.12);
+      cursor: not-allowed;
+    }
+
+    .toggle-card.pro-feature.locked {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .toggle-card.pro-feature .pro-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-left: 6px;
+    }
   </style>
 </head>
 
@@ -475,6 +552,15 @@
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
 
+        <label class="toggle-card pro-feature locked">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide tweet Grok icon<span class="pro-badge">Pro</span></span>
+            <span class="toggle-desc">Hide Grok actions button next to the ... More menu.</span>
+          </span>
+          <input type="checkbox" id="hide-tweet-grok-icon" disabled>
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
         <label class="toggle-card">
           <span class="toggle-copy">
             <span class="toggle-title">Merge Communities</span>
@@ -484,6 +570,13 @@
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
       </div>
+    </div>
+
+    <div id="activation-form">
+      <div class="form-title">Activate Pro</div>
+      <div class="form-desc">Enter your license key to unlock Pro features.</div>
+      <input type="text" id="license-key" placeholder="XXXX-XXXX-XXXX-XXXX">
+      <button type="button" id="activate-btn">Activate License</button>
     </div>
 
     <p class="helper-note">First run: turn on the cleanup you want, refresh X if it was already open, then drag noisy posts to the trash button or use the mini window for quick check-ins.</p>

@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Better X/Twitter",
-  "version": "1.0.8",
+  "version": "1.0.18",
   "description": "Hide promoted posts locally and clean up desktop X in fewer clicks",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
     "https://twitter.com/*",
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://api.polar.sh/*"
   ],
   "background": {
     "service_worker": "background.js"
