@@ -2650,7 +2650,7 @@ function openReplyCleanerPanel() {
     <div class="quietx-rc-body">
       <div class="quietx-rc-info">
         Select replies to hide. Click on replies in the page or use clusters below.
-        <br><small>Max ${REPLY_CLEANER_MAX_ITEMS} per run. Prefers "Hide reply" over Delete.</small>
+        <br><small>Max ${REPLY_CLEANER_MAX_ITEMS} per run. Uses "Hide reply" only (no delete).</small>
       </div>
       ${clustersHtml}
       <div class="quietx-rc-section">
@@ -2769,8 +2769,9 @@ async function confirmCleanup(replies) {
   
   const confirmed = window.confirm(
     `Hide ${cappedCount} selected ${cappedCount === 1 ? 'reply' : 'replies'}?\n\n` +
-    `This will click "Hide reply" (preferred) or "Delete" on each selected reply.\n` +
-    `Click interval: ${REPLY_CLEANER_CLICK_INTERVAL_MS}ms minimum.\n\n` +
+    `This will click "Hide reply" on each selected reply.\n` +
+    `Click interval: ${REPLY_CLEANER_CLICK_INTERVAL_MS}ms minimum.\n` +
+    `Stops immediately if Hide reply option is unavailable.\n\n` +
     `Cancel = no changes.`
   );
   
@@ -2789,10 +2790,9 @@ async function runCleanup(targets) {
   replyCleanerRunning = true;
   
   let hiddenCount = 0;
-  let deletedCount = 0;
   let errorMsg = null;
   
-  showCleanerStatus(`Cleaning: 0/${targets.length}...`);
+  showCleanerStatus(`Hiding: 0/${targets.length}...`);
   
   for (let i = 0; i < targets.length; i++) {
     const reply = targets[i];
@@ -2802,18 +2802,16 @@ async function runCleanup(targets) {
       break;
     }
     
-    const result = await hideOrDeleteReply(reply);
+    const result = await hideReply(reply);
     
-    if (result === 'hidden') {
+    if (result.status === 'hidden') {
       hiddenCount++;
-    } else if (result === 'deleted') {
-      deletedCount++;
-    } else if (result === 'error') {
-      errorMsg = `Control missing on reply ${i + 1}. Stopping.`;
+    } else if (result.status === 'error') {
+      errorMsg = `Reply ${i + 1}: ${result.reason}. Stopping.`;
       break;
     }
     
-    showCleanerStatus(`Cleaning: ${hiddenCount + deletedCount}/${targets.length}...`);
+    showCleanerStatus(`Hiding: ${hiddenCount}/${targets.length}...`);
     
     if (i < targets.length - 1) {
       await sleep(REPLY_CLEANER_CLICK_INTERVAL_MS);
@@ -2824,80 +2822,91 @@ async function runCleanup(targets) {
   
   let statusMsg = '';
   if (hiddenCount > 0) statusMsg += `Hidden: ${hiddenCount}`;
-  if (deletedCount > 0) statusMsg += (statusMsg ? ', ' : '') + `Deleted: ${deletedCount}`;
   if (errorMsg) statusMsg += (statusMsg ? ' | ' : '') + errorMsg;
-  if (!statusMsg) statusMsg = 'No replies processed.';
+  if (!statusMsg) statusMsg = 'No replies hidden.';
   
   showCleanerStatus(statusMsg, 5000);
 }
 
-async function hideOrDeleteReply(reply) {
+async function hideReply(reply) {
   try {
     const caretBtn = reply.querySelector('[data-testid="caret"], [aria-label="More"], [aria-label="更多"]');
     if (!caretBtn) {
       console.warn('Reply Cleaner: Caret/More button not found');
-      return 'error';
+      return { status: 'error', reason: 'Caret button not found' };
     }
     
     caretBtn.scrollIntoView({ block: 'center', behavior: 'instant' });
     await sleep(50);
     caretBtn.click();
     
-    let menuItems = [];
+    let menu = null;
     for (let attempt = 0; attempt < 15; attempt++) {
       await sleep(100);
-      menuItems = Array.from(document.querySelectorAll('[role="menuitem"]'));
-      if (menuItems.length > 0) break;
+      menu = document.querySelector('[role="menu"]');
+      if (menu) break;
     }
     
-    if (menuItems.length === 0) {
+    if (!menu) {
       console.warn('Reply Cleaner: Menu did not appear');
-      return 'error';
+      return { status: 'error', reason: 'Menu did not open' };
+    }
+    
+    const menuItems = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+    
+    if (menuItems.length === 0) {
+      caretBtn.click();
+      console.warn('Reply Cleaner: No menu items found');
+      return { status: 'error', reason: 'No menu items' };
     }
     
     let hideBtn = null;
-    let deleteBtn = null;
     
     for (const item of menuItems) {
       const text = (item.textContent || '').toLowerCase().trim();
       
-      if (text.includes('hide reply') || text.includes('隐藏回复') || text.includes('隱藏回覆')) {
-        hideBtn = item;
+      if (isDeletePostLabel(text)) {
+        caretBtn.click();
+        console.warn('Reply Cleaner: Found Delete post - this is author menu, not reply menu. Stopping.');
+        return { status: 'error', reason: 'Delete post detected (wrong menu)' };
       }
       
-      if (text.includes('delete') || text.includes('删除') || text.includes('刪除')) {
-        if (!text.includes('undo')) {
-          deleteBtn = item;
-        }
+      if (isHideReplyLabel(text)) {
+        hideBtn = item;
       }
     }
     
     if (hideBtn) {
       hideBtn.click();
       await sleep(150);
-      return 'hidden';
-    }
-    
-    if (deleteBtn) {
-      deleteBtn.click();
-      await sleep(200);
-      
-      const confirmBtn = document.querySelector('[data-testid="confirmationSheetConfirm"]');
-      if (confirmBtn) {
-        confirmBtn.click();
-        await sleep(150);
-      }
-      return 'deleted';
+      return { status: 'hidden', reason: null };
     }
     
     caretBtn.click();
-    console.warn('Reply Cleaner: Neither Hide nor Delete found in menu');
-    return 'error';
+    console.warn('Reply Cleaner: Hide reply option not found in menu');
+    return { status: 'error', reason: 'Hide reply not available' };
     
   } catch (err) {
     console.error('Reply Cleaner error:', err);
-    return 'error';
+    return { status: 'error', reason: err.message };
   }
+}
+
+function isHideReplyLabel(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return t.includes('hide reply') || 
+         t.includes('隐藏回复') || 
+         t.includes('隱藏回覆');
+}
+
+function isDeletePostLabel(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return (t.includes('delete post') || t.includes('delete tweet') ||
+          t.includes('删除帖子') || t.includes('删除推文') ||
+          t.includes('刪除帖子') || t.includes('刪除推文') ||
+          (t === 'delete') || (t === '删除') || (t === '刪除'));
 }
 
 function sleep(ms) {

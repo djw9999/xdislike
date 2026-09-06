@@ -131,25 +131,37 @@ function findNearDuplicateClusters(texts) {
   return clusters;
 }
 
-function rankMenuItems(items) {
-  let hideBtn = null;
-  let deleteBtn = null;
-  
-  for (const item of items) {
+function isHideReplyLabel(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return t.includes('hide reply') || 
+         t.includes('隐藏回复') || 
+         t.includes('隱藏回覆');
+}
+
+function isDeletePostLabel(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return (t.includes('delete post') || t.includes('delete tweet') ||
+          t.includes('删除帖子') || t.includes('删除推文') ||
+          t.includes('刪除帖子') || t.includes('刪除推文') ||
+          (t === 'delete') || (t === '删除') || (t === '刪除'));
+}
+
+function findHideReplyInMenu(menuItems) {
+  for (const item of menuItems) {
     const text = item.toLowerCase().trim();
     
-    if (text.includes('hide reply') || text.includes('隐藏回复') || text.includes('隱藏回覆')) {
-      hideBtn = item;
+    if (isDeletePostLabel(text)) {
+      return { found: false, error: 'Delete post detected (wrong menu)' };
     }
     
-    if (text.includes('delete') || text.includes('删除') || text.includes('刪除')) {
-      if (!text.includes('undo')) {
-        deleteBtn = item;
-      }
+    if (isHideReplyLabel(text)) {
+      return { found: true, item: item, error: null };
     }
   }
   
-  return { hideBtn, deleteBtn, preferHide: hideBtn !== null };
+  return { found: false, error: 'Hide reply not available' };
 }
 
 function createStatusPageHTML(options = {}) {
@@ -336,117 +348,173 @@ describe('Reply Cleaner Feature - Cancel Path', () => {
   });
 });
 
-describe('Reply Cleaner Feature - Prefer Hide Ranking', () => {
-  test('prefers Hide Reply over Delete when both available', () => {
-    const menuItems = ['Hide reply', 'Delete', 'Report'];
-    const result = rankMenuItems(menuItems);
+describe('Reply Cleaner Feature - Hide Only (No Delete)', () => {
+  test('finds Hide Reply when available', () => {
+    const menuItems = ['Hide reply', 'Report', 'Block'];
+    const result = findHideReplyInMenu(menuItems);
     
-    assert.strictEqual(result.preferHide, true, 'Should prefer Hide');
-    assert.strictEqual(result.hideBtn, 'Hide reply', 'Should find Hide button');
-    assert.strictEqual(result.deleteBtn, 'Delete', 'Should also find Delete button');
+    assert.strictEqual(result.found, true, 'Should find Hide Reply');
+    assert.strictEqual(result.item, 'Hide reply', 'Should return Hide item');
+    assert.strictEqual(result.error, null, 'Should have no error');
   });
 
-  test('falls back to Delete when Hide not available', () => {
-    const menuItems = ['Delete', 'Report', 'Block'];
-    const result = rankMenuItems(menuItems);
+  test('returns error when Hide Reply not available (no fallback to Delete)', () => {
+    const menuItems = ['Report', 'Block', 'Mute'];
+    const result = findHideReplyInMenu(menuItems);
     
-    assert.strictEqual(result.preferHide, false, 'Should not prefer Hide when not available');
-    assert.strictEqual(result.hideBtn, null, 'Hide button should be null');
-    assert.strictEqual(result.deleteBtn, 'Delete', 'Should find Delete button');
+    assert.strictEqual(result.found, false, 'Should not find Hide Reply');
+    assert.strictEqual(result.error, 'Hide reply not available', 'Should return error');
+  });
+
+  test('blocks Delete post menu - stops with error', () => {
+    const menuItems = ['Delete post', 'Edit', 'Pin'];
+    const result = findHideReplyInMenu(menuItems);
+    
+    assert.strictEqual(result.found, false, 'Should not proceed with Delete post menu');
+    assert.strictEqual(result.error, 'Delete post detected (wrong menu)', 'Should detect wrong menu');
+  });
+
+  test('blocks Delete (bare) label - stops with error', () => {
+    const menuItems = ['Delete', 'Edit', 'Pin'];
+    const result = findHideReplyInMenu(menuItems);
+    
+    assert.strictEqual(result.found, false, 'Should not proceed with bare Delete');
+    assert.strictEqual(result.error, 'Delete post detected (wrong menu)', 'Should detect wrong menu');
+  });
+
+  test('blocks Chinese 删除帖子 (Delete post) - stops with error', () => {
+    const menuItems = ['删除帖子', '编辑', '置顶'];
+    const result = findHideReplyInMenu(menuItems);
+    
+    assert.strictEqual(result.found, false, 'Should block Chinese Delete post');
+    assert.strictEqual(result.error, 'Delete post detected (wrong menu)', 'Should detect wrong menu');
+  });
+
+  test('blocks Chinese 删除 (bare Delete) - stops with error', () => {
+    const menuItems = ['删除', '编辑'];
+    const result = findHideReplyInMenu(menuItems);
+    
+    assert.strictEqual(result.found, false, 'Should block bare Chinese Delete');
+    assert.strictEqual(result.error, 'Delete post detected (wrong menu)', 'Should detect wrong menu');
   });
 
   test('recognizes Chinese "隐藏回复" as Hide Reply', () => {
-    const menuItems = ['隐藏回复', '删除', '举报'];
-    const result = rankMenuItems(menuItems);
+    const menuItems = ['隐藏回复', '举报'];
+    const result = findHideReplyInMenu(menuItems);
     
-    assert.strictEqual(result.preferHide, true, 'Should prefer Hide (Chinese simplified)');
-    assert.strictEqual(result.hideBtn, '隐藏回复', 'Should find Chinese Hide button');
+    assert.strictEqual(result.found, true, 'Should find Chinese simplified Hide Reply');
+    assert.strictEqual(result.item, '隐藏回复', 'Should return Chinese item');
   });
 
   test('recognizes Chinese Traditional "隱藏回覆" as Hide Reply', () => {
-    const menuItems = ['隱藏回覆', '刪除', '檢舉'];
-    const result = rankMenuItems(menuItems);
+    const menuItems = ['隱藏回覆', '檢舉'];
+    const result = findHideReplyInMenu(menuItems);
     
-    assert.strictEqual(result.preferHide, true, 'Should prefer Hide (Chinese traditional)');
-    assert.strictEqual(result.hideBtn, '隱藏回覆', 'Should find Chinese traditional Hide button');
+    assert.strictEqual(result.found, true, 'Should find Chinese traditional Hide Reply');
+    assert.strictEqual(result.item, '隱藏回覆', 'Should return Chinese traditional item');
   });
 
-  test('does not match "undo delete" as delete', () => {
-    const menuItems = ['Undo delete', 'Report'];
-    const result = rankMenuItems(menuItems);
+  test('Delete post detected BEFORE Hide reply in menu order blocks operation', () => {
+    const menuItems = ['Delete post', 'Hide reply', 'Report'];
+    const result = findHideReplyInMenu(menuItems);
     
-    assert.strictEqual(result.deleteBtn, null, 'Should not match undo delete');
+    assert.strictEqual(result.found, false, 'Delete post should block even if Hide exists');
+    assert.strictEqual(result.error, 'Delete post detected (wrong menu)', 'Should stop on Delete');
   });
 });
 
 describe('Reply Cleaner Feature - Stop on Missing Control', () => {
-  test('returns error when caret button not found', async () => {
+  test('returns error with reason when caret button not found', async () => {
     const mockReply = {
       querySelector: () => null
     };
     
-    const hideOrDeleteReply = async (reply) => {
+    const hideReply = async (reply) => {
       const caretBtn = reply.querySelector('[data-testid="caret"]');
       if (!caretBtn) {
-        return 'error';
+        return { status: 'error', reason: 'Caret button not found' };
       }
-      return 'hidden';
+      return { status: 'hidden', reason: null };
     };
     
-    const result = await hideOrDeleteReply(mockReply);
-    assert.strictEqual(result, 'error', 'Should return error when caret not found');
+    const result = await hideReply(mockReply);
+    assert.strictEqual(result.status, 'error', 'Should return error status');
+    assert.strictEqual(result.reason, 'Caret button not found', 'Should have specific reason');
   });
 
   test('returns error when menu does not appear', async () => {
     let menuShown = false;
     
-    const hideOrDeleteReply = async () => {
+    const hideReply = async () => {
       if (!menuShown) {
-        return 'error';
+        return { status: 'error', reason: 'Menu did not open' };
       }
-      return 'hidden';
+      return { status: 'hidden', reason: null };
     };
     
-    const result = await hideOrDeleteReply();
-    assert.strictEqual(result, 'error', 'Should return error when menu does not appear');
+    const result = await hideReply();
+    assert.strictEqual(result.status, 'error', 'Should return error when menu does not appear');
+    assert.strictEqual(result.reason, 'Menu did not open', 'Should have specific reason');
   });
 
-  test('returns error when neither Hide nor Delete found in menu', async () => {
+  test('returns error when Hide reply not found in menu (no Delete fallback)', async () => {
     const menuItems = ['Report', 'Block', 'Mute'];
     
-    const hideOrDeleteReply = async () => {
-      const result = rankMenuItems(menuItems);
-      if (!result.hideBtn && !result.deleteBtn) {
-        return 'error';
+    const hideReply = async () => {
+      const result = findHideReplyInMenu(menuItems);
+      if (!result.found) {
+        return { status: 'error', reason: result.error };
       }
-      return result.hideBtn ? 'hidden' : 'deleted';
+      return { status: 'hidden', reason: null };
     };
     
-    const result = await hideOrDeleteReply();
-    assert.strictEqual(result, 'error', 'Should return error when no Hide/Delete in menu');
+    const result = await hideReply();
+    assert.strictEqual(result.status, 'error', 'Should return error when no Hide in menu');
+    assert.strictEqual(result.reason, 'Hide reply not available', 'Should specify Hide not available');
   });
 
-  test('cleanup stops when error encountered', async () => {
+  test('returns error when Delete post menu detected (hard-ban)', async () => {
+    const menuItems = ['Delete post', 'Edit', 'Pin to profile'];
+    
+    const hideReply = async () => {
+      const result = findHideReplyInMenu(menuItems);
+      if (!result.found) {
+        return { status: 'error', reason: result.error };
+      }
+      return { status: 'hidden', reason: null };
+    };
+    
+    const result = await hideReply();
+    assert.strictEqual(result.status, 'error', 'Should return error for Delete post menu');
+    assert.ok(result.reason.includes('Delete post detected'), 'Should indicate wrong menu');
+  });
+
+  test('cleanup stops when error encountered with reason', async () => {
     const targets = [{ id: 1 }, { id: 2 }, { id: 3 }];
-    let processedCount = 0;
+    let hiddenCount = 0;
     let errorMsg = null;
     
-    const results = ['hidden', 'error', 'hidden'];
+    const results = [
+      { status: 'hidden', reason: null },
+      { status: 'error', reason: 'Hide reply not available' },
+      { status: 'hidden', reason: null }
+    ];
     
     for (let i = 0; i < targets.length; i++) {
       const result = results[i];
       
-      if (result === 'hidden') {
-        processedCount++;
-      } else if (result === 'error') {
-        errorMsg = `Control missing on reply ${i + 1}. Stopping.`;
+      if (result.status === 'hidden') {
+        hiddenCount++;
+      } else if (result.status === 'error') {
+        errorMsg = `Reply ${i + 1}: ${result.reason}. Stopping.`;
         break;
       }
     }
     
-    assert.strictEqual(processedCount, 1, 'Should only process 1 before error');
+    assert.strictEqual(hiddenCount, 1, 'Should only hide 1 before error');
     assert.ok(errorMsg, 'Should have error message');
     assert.ok(errorMsg.includes('Stopping'), 'Error should indicate stopping');
+    assert.ok(errorMsg.includes('Hide reply not available'), 'Error should include reason');
   });
 });
 
