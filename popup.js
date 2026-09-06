@@ -36,7 +36,7 @@ async function validateLicenseKey(key) {
 }
 
 function restoreState() {
-  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon'], (result) => {
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon', 'hideSimilarReplies', 'similarRepliesSensitivity'], (result) => {
     const hasStoredGrant = result.licenseKey && result.isPro;
 
     if (hasStoredGrant) {
@@ -74,6 +74,21 @@ function restoreState() {
         hideTweetGrokIconEl.disabled = true;
       }
     }
+
+    const hideSimilarRepliesEl = document.getElementById('hide-similar-replies');
+    if (hideSimilarRepliesEl) {
+      if (hasStoredGrant) {
+        hideSimilarRepliesEl.checked = !!result.hideSimilarReplies;
+      } else {
+        hideSimilarRepliesEl.checked = false;
+        hideSimilarRepliesEl.disabled = true;
+      }
+    }
+
+    const sensitivity = result.similarRepliesSensitivity || 'medium';
+    document.querySelectorAll('.sensitivity-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.level === sensitivity);
+    });
   });
 }
 
@@ -82,7 +97,9 @@ function updateUI(isPro) {
   const features = document.getElementById('main-features');
   const status = document.getElementById('ready-status');
   const proToggleCards = document.querySelectorAll('.toggle-card.pro-feature');
+  const proElements = document.querySelectorAll('.pro-feature');
   const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+  const hideSimilarRepliesEl = document.getElementById('hide-similar-replies');
 
   if (isPro) {
     if (form) form.style.display = 'none';
@@ -96,8 +113,14 @@ function updateUI(isPro) {
       const input = card.querySelector('input');
       if (input) input.disabled = false;
     });
+    proElements.forEach(el => {
+      el.classList.remove('locked');
+    });
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = false;
+    }
+    if (hideSimilarRepliesEl) {
+      hideSimilarRepliesEl.disabled = false;
     }
   } else {
     if (form) form.style.display = 'grid';
@@ -114,9 +137,16 @@ function updateUI(isPro) {
         input.checked = false;
       }
     });
+    proElements.forEach(el => {
+      el.classList.add('locked');
+    });
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = true;
       hideTweetGrokIconEl.checked = false;
+    }
+    if (hideSimilarRepliesEl) {
+      hideSimilarRepliesEl.disabled = true;
+      hideSimilarRepliesEl.checked = false;
     }
   }
 }
@@ -227,6 +257,35 @@ function wireSettings() {
       await chrome.storage.local.set({ hideTweetGrokIcon: !!hideTweetGrokIconEl.checked });
     });
   }
+
+  const hideSimilarRepliesEl = document.getElementById('hide-similar-replies');
+  if (hideSimilarRepliesEl) {
+    hideSimilarRepliesEl.addEventListener('change', async () => {
+      const isPro = await new Promise(resolve => {
+        chrome.storage.local.get(['isPro'], r => resolve(!!r.isPro));
+      });
+      if (!isPro) {
+        hideSimilarRepliesEl.checked = false;
+        return;
+      }
+      await chrome.storage.local.set({ hideSimilarReplies: !!hideSimilarRepliesEl.checked });
+    });
+  }
+
+  const sensitivityBtns = document.querySelectorAll('.sensitivity-btn');
+  sensitivityBtns.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const isPro = await new Promise(resolve => {
+        chrome.storage.local.get(['isPro'], r => resolve(!!r.isPro));
+      });
+      if (!isPro) return;
+
+      const level = btn.dataset.level;
+      sensitivityBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      await chrome.storage.local.set({ similarRepliesSensitivity: level });
+    });
+  });
 }
 
 const MINI_WINDOW_ID_KEY = 'miniWindowId';

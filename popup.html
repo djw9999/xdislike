@@ -470,6 +470,72 @@
       letter-spacing: 0.04em;
       margin-left: 6px;
     }
+
+    .sensitivity-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--panel-soft);
+      border: 1px solid rgba(255, 255, 255, 0.075);
+      margin-top: -4px;
+    }
+
+    .sensitivity-row.locked {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .sensitivity-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .sensitivity-selector {
+      display: flex;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .sensitivity-btn {
+      padding: 5px 12px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 140ms ease, color 140ms ease;
+    }
+
+    .sensitivity-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+    }
+
+    .sensitivity-btn.active {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .inline-hint {
+      margin: 4px 0 0;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(29, 155, 240, 0.08);
+      border: 1px solid rgba(29, 155, 240, 0.12);
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .inline-hint.locked {
+      opacity: 0.5;
+    }
   </style>
 </head>
 
@@ -560,6 +626,26 @@
           <input type="checkbox" id="hide-tweet-grok-icon" disabled>
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
+
+        <label class="toggle-card pro-feature locked">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide similar replies<span class="pro-badge">Pro</span></span>
+            <span class="toggle-desc">Auto-cluster near-duplicate replies when entering post pages.</span>
+          </span>
+          <input type="checkbox" id="hide-similar-replies" disabled>
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <div class="sensitivity-row pro-feature locked" id="sensitivity-row">
+          <span class="sensitivity-label">Sensitivity</span>
+          <div class="sensitivity-selector">
+            <button type="button" class="sensitivity-btn" data-level="strict">严</button>
+            <button type="button" class="sensitivity-btn active" data-level="medium">中</button>
+            <button type="button" class="sensitivity-btn" data-level="loose">松</button>
+          </div>
+        </div>
+
+        <p class="inline-hint pro-feature locked" id="similar-replies-hint">On post pages, use the 「清理相似回复」 button to hide duplicates.</p>
 
         <label class="toggle-card">
           <span class="toggle-copy">

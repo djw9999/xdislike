@@ -1655,6 +1655,9 @@ function init() {
       // Watch for new posts (infinite scroll)
       setInterval(initializePosts, 2000);
 
+      // Initialize similar replies feature (Pro, 1.0.19)
+      initSimilarRepliesFeature();
+
       lastCommunityTabLabel =
         typeof result.lastCommunityTabLabel === "string"
           ? result.lastCommunityTabLabel
@@ -2395,3 +2398,490 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({status: 'ok', enabled});
   }
 });
+
+// ---- Hide Similar Replies Feature (Pro, 1.0.19) ----
+// Clusters near-duplicate replies on status/tweet detail pages.
+// Uses normalized Levenshtein similarity. No LLM, no X API calls, no sniffing.
+
+const SIMILAR_REPLIES_HIDDEN_CLASS = 'quietx-similar-reply-hidden';
+const SIMILAR_REPLIES_CHIP_CLASS = 'quietx-similar-chip';
+const SIMILAR_REPLIES_CONTROL_CLASS = 'quietx-clean-similar-btn';
+const SIMILAR_REPLIES_CONTAINER_ID = 'quietx-similar-replies-controls';
+
+let hideSimilarRepliesEnabled = false;
+let similarRepliesSensitivity = 'medium';
+let similarRepliesObserver = null;
+let similarRepliesClusters = [];
+let lastStatusPageUrl = null;
+
+// Similarity thresholds: higher = more strict (fewer matches)
+// Threshold is minimum similarity ratio (0-1) to consider as "similar"
+// 严 (strict): 0.80 - very similar text only
+// 中 (medium): 0.65 - moderate similarity (default, catches 好可爱/好可耐/好可爱！)
+//   - 好可爱 vs 好可耐: distance=1, maxLen=3, ratio=0.667 ✓
+//   - 好可爱 vs 好可爱！: distance=1, maxLen=4, ratio=0.75 ✓
+// 松 (loose): 0.50 - looser matching
+const SIMILARITY_THRESHOLDS = {
+  strict: 0.80,
+  medium: 0.65,
+  loose: 0.50
+};
+
+function isOnStatusPage() {
+  const path = window.location.pathname;
+  return /^\/[^/]+\/status\/\d+/.test(path);
+}
+
+// Normalize text for comparison: trim, collapse whitespace, normalize common punctuation
+function normalizeReplyText(text) {
+  if (!text) return '';
+  let normalized = text
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[！!]+/g, '!')
+    .replace(/[？?]+/g, '?')
+    .replace(/[。.]+/g, '.')
+    .replace(/[，,]+/g, ',')
+    .replace(/[～~]+/g, '~')
+    .toLowerCase();
+  return normalized;
+}
+
+// Levenshtein distance calculation
+function levenshteinDistance(s1, s2) {
+  if (s1 === s2) return 0;
+  if (s1.length === 0) return s2.length;
+  if (s2.length === 0) return s1.length;
+
+  const matrix = [];
+  for (let i = 0; i <= s1.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= s2.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= s1.length; i++) {
+    for (let j = 1; j <= s2.length; j++) {
+      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return matrix[s1.length][s2.length];
+}
+
+// Calculate similarity ratio (0-1, where 1 = identical)
+function similarityRatio(s1, s2) {
+  if (!s1 && !s2) return 1;
+  if (!s1 || !s2) return 0;
+  const maxLen = Math.max(s1.length, s2.length);
+  if (maxLen === 0) return 1;
+  const distance = levenshteinDistance(s1, s2);
+  return 1 - (distance / maxLen);
+}
+
+// Get reply articles from the current status page (not the primary/focus tweet)
+function getReplyArticles() {
+  if (!isOnStatusPage()) return [];
+  
+  const allArticles = document.querySelectorAll('article[data-testid="tweet"]');
+  const replies = [];
+  
+  // The first article is typically the primary tweet; skip it.
+  // Replies are subsequent articles in the conversation column.
+  let foundPrimary = false;
+  allArticles.forEach((article, index) => {
+    // Skip if this is in nav/sidebar
+    if (article.closest('nav') || article.closest('[data-testid="sidebarColumn"]')) return;
+    
+    // The primary tweet usually has a different structure or is the first one
+    // We identify it as the one whose status link matches the current URL
+    const statusLinks = article.querySelectorAll('a[href*="/status/"]');
+    const currentStatusId = window.location.pathname.match(/\/status\/(\d+)/)?.[1];
+    
+    let isPrimary = false;
+    statusLinks.forEach(link => {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/\/status\/(\d+)/);
+      if (match && match[1] === currentStatusId) {
+        // Check if this is the primary tweet container (not just a quote or reply-to)
+        const tweetText = article.querySelector('[data-testid="tweetText"]');
+        if (tweetText && !foundPrimary) {
+          isPrimary = true;
+          foundPrimary = true;
+        }
+      }
+    });
+    
+    if (!isPrimary && foundPrimary) {
+      replies.push(article);
+    } else if (index > 0) {
+      // Fallback: if we haven't identified primary, treat first as primary
+      replies.push(article);
+    }
+  });
+  
+  return replies;
+}
+
+// Extract text from a reply article
+function extractReplyText(article) {
+  if (!(article instanceof HTMLElement)) return '';
+  const tweetText = article.querySelector('[data-testid="tweetText"]');
+  if (!tweetText) return '';
+  return (tweetText.textContent || '').trim();
+}
+
+// Cluster replies by similarity
+function clusterReplies(replies, threshold) {
+  const clusters = [];
+  const assigned = new Set();
+  
+  for (let i = 0; i < replies.length; i++) {
+    if (assigned.has(i)) continue;
+    
+    const cluster = [i];
+    const textI = normalizeReplyText(extractReplyText(replies[i]));
+    
+    // Skip empty or very short texts (likely media-only)
+    if (textI.length < 2) {
+      assigned.add(i);
+      continue;
+    }
+    
+    for (let j = i + 1; j < replies.length; j++) {
+      if (assigned.has(j)) continue;
+      
+      const textJ = normalizeReplyText(extractReplyText(replies[j]));
+      if (textJ.length < 2) continue;
+      
+      const similarity = similarityRatio(textI, textJ);
+      if (similarity >= threshold) {
+        cluster.push(j);
+        assigned.add(j);
+      }
+    }
+    
+    assigned.add(i);
+    if (cluster.length >= 2) {
+      clusters.push(cluster);
+    }
+  }
+  
+  return clusters;
+}
+
+// Hide duplicate replies in a cluster, keeping the first as representative
+function hideSimilarRepliesInCluster(replies, clusterIndices) {
+  if (clusterIndices.length < 2) return { hidden: 0, representative: null };
+  
+  const representative = replies[clusterIndices[0]];
+  let hiddenCount = 0;
+  
+  for (let i = 1; i < clusterIndices.length; i++) {
+    const article = replies[clusterIndices[i]];
+    if (article && !article.classList.contains(SIMILAR_REPLIES_HIDDEN_CLASS)) {
+      article.classList.add(SIMILAR_REPLIES_HIDDEN_CLASS);
+      article.setAttribute('data-quietx-cluster-id', clusterIndices[0].toString());
+      hiddenCount++;
+    }
+  }
+  
+  return { hidden: hiddenCount, representative };
+}
+
+// Show all hidden replies in a cluster
+function showClusterReplies(clusterId) {
+  const hidden = document.querySelectorAll(`[data-quietx-cluster-id="${clusterId}"].${SIMILAR_REPLIES_HIDDEN_CLASS}`);
+  hidden.forEach(el => {
+    el.classList.remove(SIMILAR_REPLIES_HIDDEN_CLASS);
+    el.removeAttribute('data-quietx-cluster-id');
+  });
+}
+
+// Show all hidden similar replies (undo all)
+function undoAllSimilarReplies() {
+  document.querySelectorAll('.' + SIMILAR_REPLIES_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(SIMILAR_REPLIES_HIDDEN_CLASS);
+    el.removeAttribute('data-quietx-cluster-id');
+  });
+  similarRepliesClusters = [];
+  removeSimilarRepliesChip();
+}
+
+// Remove the results chip
+function removeSimilarRepliesChip() {
+  const existingChip = document.querySelector('.' + SIMILAR_REPLIES_CHIP_CLASS);
+  if (existingChip) existingChip.remove();
+}
+
+// Create or update the results chip showing "已藏 N 条" with expand and undo
+function createOrUpdateSimilarRepliesChip(totalHidden, clusters, replies) {
+  removeSimilarRepliesChip();
+  
+  if (totalHidden < 1) return;
+  
+  const chip = document.createElement('div');
+  chip.className = SIMILAR_REPLIES_CHIP_CLASS;
+  
+  const countSpan = document.createElement('span');
+  countSpan.className = 'quietx-chip-count';
+  countSpan.textContent = `已藏 ${totalHidden} 条`;
+  
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'quietx-chip-expand';
+  expandBtn.textContent = '展开';
+  expandBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Show all hidden replies
+    clusters.forEach(cluster => {
+      showClusterReplies(cluster[0]);
+    });
+    similarRepliesClusters = [];
+    removeSimilarRepliesChip();
+  });
+  
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'quietx-chip-undo';
+  undoBtn.textContent = '撤销';
+  undoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    undoAllSimilarReplies();
+  });
+  
+  chip.appendChild(countSpan);
+  chip.appendChild(expandBtn);
+  chip.appendChild(undoBtn);
+  
+  // Insert after the control button container
+  const controlContainer = document.getElementById(SIMILAR_REPLIES_CONTAINER_ID);
+  if (controlContainer) {
+    controlContainer.appendChild(chip);
+  }
+}
+
+// Main function to run the cluster+hide pass
+function runSimilarRepliesCleanup() {
+  if (!isOnStatusPage()) return { hidden: 0, clusters: 0 };
+  
+  const replies = getReplyArticles();
+  if (replies.length < 2) return { hidden: 0, clusters: 0 };
+  
+  const threshold = SIMILARITY_THRESHOLDS[similarRepliesSensitivity] || SIMILARITY_THRESHOLDS.medium;
+  const clusters = clusterReplies(replies, threshold);
+  
+  if (clusters.length === 0) return { hidden: 0, clusters: 0 };
+  
+  let totalHidden = 0;
+  clusters.forEach(cluster => {
+    const result = hideSimilarRepliesInCluster(replies, cluster);
+    totalHidden += result.hidden;
+  });
+  
+  similarRepliesClusters = clusters;
+  
+  if (totalHidden > 0) {
+    createOrUpdateSimilarRepliesChip(totalHidden, clusters, replies);
+  }
+  
+  console.log(`QuietX: Hidden ${totalHidden} similar replies across ${clusters.length} clusters`);
+  return { hidden: totalHidden, clusters: clusters.length };
+}
+
+// Create the "清理相似回复" control button
+function createSimilarRepliesControl() {
+  if (!isOnStatusPage()) return;
+  if (document.getElementById(SIMILAR_REPLIES_CONTAINER_ID)) return;
+  
+  const container = document.createElement('div');
+  container.id = SIMILAR_REPLIES_CONTAINER_ID;
+  container.className = 'quietx-similar-controls';
+  
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = SIMILAR_REPLIES_CONTROL_CLASS;
+  btn.textContent = '清理相似回复';
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // First undo any previous cleanup
+    undoAllSimilarReplies();
+    
+    // Run cleanup
+    const result = runSimilarRepliesCleanup();
+    
+    if (result.hidden === 0) {
+      // Show brief feedback that no similar replies found
+      btn.textContent = '未发现相似';
+      btn.disabled = true;
+      setTimeout(() => {
+        btn.textContent = '清理相似回复';
+        btn.disabled = false;
+      }, 1500);
+    }
+  });
+  
+  container.appendChild(btn);
+  
+  // Find a good place to insert the control - after the primary tweet
+  const insertControl = () => {
+    const existingContainer = document.getElementById(SIMILAR_REPLIES_CONTAINER_ID);
+    if (existingContainer) return;
+    
+    // Look for the replies section header or conversation area
+    const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
+    if (!primaryColumn) return;
+    
+    // Insert near the top of the timeline section
+    const timeline = primaryColumn.querySelector('section[role="region"]');
+    if (timeline) {
+      timeline.insertBefore(container, timeline.firstChild);
+    } else {
+      // Fallback: insert at the top of the primary column content
+      const header = primaryColumn.querySelector('div[data-testid="cellInnerDiv"]');
+      if (header && header.parentElement) {
+        header.parentElement.insertBefore(container, header);
+      }
+    }
+  };
+  
+  // Delay insertion to ensure DOM is ready
+  setTimeout(insertControl, 500);
+}
+
+// Remove the control button
+function removeSimilarRepliesControl() {
+  const container = document.getElementById(SIMILAR_REPLIES_CONTAINER_ID);
+  if (container) container.remove();
+}
+
+// Setup the feature on status pages
+function setupSimilarRepliesFeature() {
+  if (!isOnStatusPage()) {
+    removeSimilarRepliesControl();
+    undoAllSimilarReplies();
+    lastStatusPageUrl = null;
+    return;
+  }
+  
+  const currentUrl = window.location.href;
+  if (currentUrl === lastStatusPageUrl) return;
+  lastStatusPageUrl = currentUrl;
+  
+  // Reset state for new page
+  undoAllSimilarReplies();
+  
+  chrome.storage.local.get(['isPro', 'hideSimilarReplies', 'similarRepliesSensitivity'], (result) => {
+    const isPro = !!result.isPro;
+    if (!isPro) return;
+    
+    similarRepliesSensitivity = result.similarRepliesSensitivity || 'medium';
+    hideSimilarRepliesEnabled = !!result.hideSimilarReplies;
+    
+    // Always show the control button for Pro users on status pages
+    createSimilarRepliesControl();
+    
+    // Auto-apply if toggle is ON (default OFF per Maya's requirement)
+    if (hideSimilarRepliesEnabled) {
+      // Delay to let replies load
+      setTimeout(() => {
+        runSimilarRepliesCleanup();
+      }, 1000);
+    }
+  });
+}
+
+// Watch for navigation changes (SPA)
+function setupSimilarRepliesNavigationWatch() {
+  let lastPath = window.location.pathname;
+  
+  const checkNavigation = () => {
+    const currentPath = window.location.pathname;
+    if (currentPath !== lastPath) {
+      lastPath = currentPath;
+      setupSimilarRepliesFeature();
+    }
+  };
+  
+  // Use MutationObserver to detect SPA navigation
+  if (similarRepliesObserver) {
+    similarRepliesObserver.disconnect();
+  }
+  
+  similarRepliesObserver = new MutationObserver(() => {
+    checkNavigation();
+  });
+  
+  similarRepliesObserver.observe(document.body, { childList: true, subtree: true });
+  
+  // Also listen for popstate
+  window.addEventListener('popstate', checkNavigation);
+}
+
+// Initialize similar replies feature
+function initSimilarRepliesFeature() {
+  chrome.storage.local.get(['isPro', 'hideSimilarReplies', 'similarRepliesSensitivity'], (result) => {
+    const isPro = !!result.isPro;
+    if (!isPro) return;
+    
+    similarRepliesSensitivity = result.similarRepliesSensitivity || 'medium';
+    hideSimilarRepliesEnabled = !!result.hideSimilarReplies;
+    
+    setupSimilarRepliesFeature();
+    setupSimilarRepliesNavigationWatch();
+  });
+  
+  // Listen for storage changes
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    
+    if (changes.isPro || changes.hideSimilarReplies || changes.similarRepliesSensitivity) {
+      chrome.storage.local.get(['isPro', 'hideSimilarReplies', 'similarRepliesSensitivity'], (result) => {
+        const isPro = !!result.isPro;
+        const wasEnabled = hideSimilarRepliesEnabled;
+        
+        hideSimilarRepliesEnabled = isPro && !!result.hideSimilarReplies;
+        similarRepliesSensitivity = result.similarRepliesSensitivity || 'medium';
+        
+        if (!isPro) {
+          removeSimilarRepliesControl();
+          undoAllSimilarReplies();
+          return;
+        }
+        
+        // Re-setup if on status page
+        if (isOnStatusPage()) {
+          createSimilarRepliesControl();
+          
+          // If just enabled auto-apply, run cleanup
+          if (hideSimilarRepliesEnabled && !wasEnabled) {
+            setTimeout(() => {
+              runSimilarRepliesCleanup();
+            }, 500);
+          }
+        }
+      });
+    }
+  });
+}
+
+// Export for testing
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeReplyText,
+    levenshteinDistance,
+    similarityRatio,
+    clusterReplies,
+    SIMILARITY_THRESHOLDS
+  };
+}
