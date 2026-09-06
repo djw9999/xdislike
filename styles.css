@@ -1004,3 +1004,325 @@ input:checked+.slider:before {
 .quietx-tweet-grok-hidden {
   display: none !important;
 }
+
+/* ---- Reply Cleaner (Pro feature, 1.0.20) ---- */
+.quietx-reply-cleaner-btn {
+  position: fixed;
+  right: 18px;
+  bottom: 92px;
+  z-index: 10000000;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(15, 20, 25, 0.92);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  color: #f7f9f9;
+  border-radius: 28px;
+  height: 46px;
+  padding: 0 16px 0 12px;
+  font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.34),
+    0 0 22px rgba(244, 33, 46, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transform: translate3d(0, 0, 0) scale(1);
+  transition:
+    transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+  touch-action: none;
+  user-select: none;
+}
+
+.quietx-reply-cleaner-btn:hover {
+  background: rgba(22, 24, 28, 0.96);
+  border-color: rgba(244, 33, 46, 0.30);
+  transform: translate3d(0, -1px, 0) scale(1.02);
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.40),
+    0 0 30px rgba(244, 33, 46, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+.quietx-reply-cleaner-btn:active {
+  transform: translate3d(0, 0, 0) scale(0.97);
+}
+
+.quietx-reply-cleaner-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Reply Cleaner Panel */
+.quietx-reply-cleaner-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 150px;
+  width: 340px;
+  max-height: 70vh;
+  z-index: 10000001;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 22, 26, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.50);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  color: #f7f9f9;
+}
+
+.quietx-rc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.quietx-rc-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.quietx-rc-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quietx-rc-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  transform: scale(1.04);
+}
+
+.quietx-rc-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.quietx-rc-info {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.70);
+  line-height: 1.45;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.quietx-rc-info small {
+  display: block;
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.50);
+}
+
+.quietx-rc-section {
+  margin-bottom: 14px;
+}
+
+.quietx-rc-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.50);
+  margin-bottom: 8px;
+}
+
+.quietx-rc-cluster-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.90);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.quietx-rc-cluster-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(244, 33, 46, 0.30);
+}
+
+.quietx-rc-cluster-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(244, 33, 46, 0.90);
+}
+
+.quietx-rc-cluster-sample {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.60);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.quietx-rc-manual-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.10);
+}
+
+.quietx-rc-selection-status {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 10px 12px;
+  background: rgba(29, 155, 240, 0.12);
+  border-radius: 10px;
+  border: 1px solid rgba(29, 155, 240, 0.20);
+  text-align: center;
+}
+
+.quietx-rc-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.quietx-rc-cancel-btn,
+.quietx-rc-confirm-btn {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 9999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: background 140ms ease, opacity 140ms ease, transform 140ms ease;
+}
+
+.quietx-rc-cancel-btn {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.quietx-rc-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.quietx-rc-confirm-btn {
+  background: rgba(244, 33, 46, 0.90);
+  color: #ffffff;
+}
+
+.quietx-rc-confirm-btn:hover:not(:disabled) {
+  background: rgba(244, 33, 46, 1);
+  transform: scale(1.01);
+}
+
+.quietx-rc-confirm-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Reply selection styles on page */
+.quietx-rc-selectable {
+  cursor: pointer !important;
+  transition: outline 150ms ease, box-shadow 150ms ease !important;
+}
+
+.quietx-rc-selectable:hover {
+  outline: 2px solid rgba(29, 155, 240, 0.50) !important;
+  box-shadow: inset 0 0 0 1px rgba(29, 155, 240, 0.20) !important;
+}
+
+.quietx-rc-selected {
+  outline: 3px solid rgba(244, 33, 46, 0.85) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15),
+    inset 0 0 20px rgba(244, 33, 46, 0.15),
+    0 0 16px rgba(244, 33, 46, 0.20) !important;
+  position: relative !important;
+}
+
+.quietx-rc-selected::before {
+  content: "✓";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(244, 33, 46, 0.95);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.30);
+}
+
+/* Cleaner status toast */
+.quietx-cleaner-status {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: rgba(15, 20, 25, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f7f9f9;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 600;
+  z-index: 10000002;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.40);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: none;
+}

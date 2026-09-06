@@ -36,7 +36,7 @@ async function validateLicenseKey(key) {
 }
 
 function restoreState() {
-  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon'], (result) => {
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon', 'cleanerOwnReplies'], (result) => {
     const hasStoredGrant = result.licenseKey && result.isPro;
 
     if (hasStoredGrant) {
@@ -74,6 +74,16 @@ function restoreState() {
         hideTweetGrokIconEl.disabled = true;
       }
     }
+
+    const cleanerOwnRepliesEl = document.getElementById('cleaner-own-replies');
+    if (cleanerOwnRepliesEl) {
+      if (hasStoredGrant) {
+        cleanerOwnRepliesEl.checked = result.cleanerOwnReplies !== false;
+      } else {
+        cleanerOwnRepliesEl.checked = false;
+        cleanerOwnRepliesEl.disabled = true;
+      }
+    }
   });
 }
 
@@ -83,6 +93,7 @@ function updateUI(isPro) {
   const status = document.getElementById('ready-status');
   const proToggleCards = document.querySelectorAll('.toggle-card.pro-feature');
   const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+  const cleanerOwnRepliesEl = document.getElementById('cleaner-own-replies');
 
   if (isPro) {
     if (form) form.style.display = 'none';
@@ -98,6 +109,9 @@ function updateUI(isPro) {
     });
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = false;
+    }
+    if (cleanerOwnRepliesEl) {
+      cleanerOwnRepliesEl.disabled = false;
     }
   } else {
     if (form) form.style.display = 'grid';
@@ -117,6 +131,10 @@ function updateUI(isPro) {
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = true;
       hideTweetGrokIconEl.checked = false;
+    }
+    if (cleanerOwnRepliesEl) {
+      cleanerOwnRepliesEl.disabled = true;
+      cleanerOwnRepliesEl.checked = false;
     }
   }
 }
@@ -169,16 +187,23 @@ function wireLicenseActivation() {
       const validation = await validateLicenseKey(key);
 
       if (validation.valid) {
-        const current = await chrome.storage.local.get(['hideTweetGrokIcon']);
+        const current = await chrome.storage.local.get(['hideTweetGrokIcon', 'cleanerOwnReplies']);
         const updates = { licenseKey: key, isPro: true };
         if (current.hideTweetGrokIcon === undefined) {
           updates.hideTweetGrokIcon = true;
+        }
+        if (current.cleanerOwnReplies === undefined) {
+          updates.cleanerOwnReplies = true;
         }
         await chrome.storage.local.set(updates);
         updateUI(true);
         const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
         if (hideTweetGrokIconEl) {
           hideTweetGrokIconEl.checked = current.hideTweetGrokIcon !== false;
+        }
+        const cleanerOwnRepliesEl = document.getElementById('cleaner-own-replies');
+        if (cleanerOwnRepliesEl) {
+          cleanerOwnRepliesEl.checked = current.cleanerOwnReplies !== false;
         }
         setStatus('ACTIVATED', false, 2000);
       } else {
@@ -202,6 +227,7 @@ function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
   const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+  const cleanerOwnRepliesEl = document.getElementById('cleaner-own-replies');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -225,6 +251,19 @@ function wireSettings() {
         return;
       }
       await chrome.storage.local.set({ hideTweetGrokIcon: !!hideTweetGrokIconEl.checked });
+    });
+  }
+
+  if (cleanerOwnRepliesEl) {
+    cleanerOwnRepliesEl.addEventListener('change', async () => {
+      const isPro = await new Promise(resolve => {
+        chrome.storage.local.get(['isPro'], r => resolve(!!r.isPro));
+      });
+      if (!isPro) {
+        cleanerOwnRepliesEl.checked = false;
+        return;
+      }
+      await chrome.storage.local.set({ cleanerOwnReplies: !!cleanerOwnRepliesEl.checked });
     });
   }
 }

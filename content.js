@@ -1599,6 +1599,18 @@ function init() {
           }
       });
 
+      // Load Reply Cleaner preference (Pro only, default ON for Pro, 1.0.20)
+      chrome.storage.local.get(['isPro', 'cleanerOwnReplies'], (r) => {
+          const isPro = !!r.isPro;
+          if (isPro) {
+              isCleanerOwnRepliesEnabled = r.cleanerOwnReplies !== false;
+              if (isCleanerOwnRepliesEnabled) {
+                  console.log("X Dislike: Reply Cleaner Enabled 🧹");
+                  setupReplyCleanerObserver();
+              }
+          }
+      });
+
       // Pin Following feature (default ON, 1.0.17)
       pinFollowingEnabled = result.pinFollowing !== false;
       if (pinFollowingEnabled) {
@@ -1649,6 +1661,22 @@ function init() {
               if (pinFollowingEnabled) {
                   setupPinFollowing();
               }
+          }
+
+          if (changes.cleanerOwnReplies || changes.isPro) {
+              chrome.storage.local.get(['isPro', 'cleanerOwnReplies'], (r) => {
+                  const isPro = !!r.isPro;
+                  const wasEnabled = isCleanerOwnRepliesEnabled;
+                  isCleanerOwnRepliesEnabled = isPro && r.cleanerOwnReplies !== false;
+
+                  console.log("X Dislike: Reply Cleaner switched to:", isCleanerOwnRepliesEnabled);
+
+                  if (isCleanerOwnRepliesEnabled && !wasEnabled) {
+                      setupReplyCleanerObserver();
+                  } else if (!isCleanerOwnRepliesEnabled && wasEnabled) {
+                      teardownReplyCleanerObserver();
+                  }
+              });
           }
       });
 
@@ -2395,3 +2423,550 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({status: 'ok', enabled});
   }
 });
+
+// ---- Reply Cleaner Feature (Pro, 1.0.20) ----
+// Allows Pro users to bulk-hide spam replies on their own posts.
+// Security constraints: UI clicks only, own posts only, no GraphQL/API calls.
+const REPLY_CLEANER_BUTTON_ID = 'quietx-reply-cleaner-btn';
+const REPLY_CLEANER_PANEL_ID = 'quietx-reply-cleaner-panel';
+const REPLY_CLEANER_MAX_ITEMS = 50;
+const REPLY_CLEANER_CLICK_INTERVAL_MS = 300;
+
+let isCleanerOwnRepliesEnabled = false;
+let replyCleanerObserver = null;
+let selectedReplies = new Set();
+let replyCleanerRunning = false;
+
+function isOnStatusPage() {
+  return /\/status\/\d+/.test(window.location.pathname);
+}
+
+function getLoggedInUserHandle() {
+  const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+  if (accountSwitcher) {
+    const handleSpan = accountSwitcher.querySelector('span');
+    if (handleSpan) {
+      const text = handleSpan.textContent || '';
+      const match = text.match(/@(\w+)/);
+      if (match) return match[1].toLowerCase();
+    }
+    const spans = accountSwitcher.querySelectorAll('span');
+    for (const span of spans) {
+      const text = (span.textContent || '').trim();
+      if (text.startsWith('@')) {
+        return text.slice(1).toLowerCase();
+      }
+    }
+  }
+  
+  const navProfile = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
+  if (navProfile) {
+    const href = navProfile.getAttribute('href') || '';
+    const match = href.match(/^\/(\w+)$/);
+    if (match) return match[1].toLowerCase();
+  }
+  
+  return null;
+}
+
+function getPrimaryTweetAuthorHandle() {
+  const primaryTweet = document.querySelector('article[data-testid="tweet"][tabindex="-1"]');
+  if (!primaryTweet) {
+    const firstTweet = document.querySelector('article[data-testid="tweet"]');
+    if (firstTweet) {
+      return extractAuthorHandleFromTweet(firstTweet);
+    }
+    return null;
+  }
+  return extractAuthorHandleFromTweet(primaryTweet);
+}
+
+function extractAuthorHandleFromTweet(tweet) {
+  if (!tweet) return null;
+  
+  const userNameEl = tweet.querySelector('[data-testid="User-Name"]');
+  if (userNameEl) {
+    const links = userNameEl.querySelectorAll('a[href^="/"]');
+    for (const link of links) {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/^\/(\w+)$/);
+      if (match) return match[1].toLowerCase();
+    }
+    
+    const text = userNameEl.textContent || '';
+    const handleMatch = text.match(/@(\w+)/);
+    if (handleMatch) return handleMatch[1].toLowerCase();
+  }
+  
+  return null;
+}
+
+function isViewingOwnPost() {
+  if (!isOnStatusPage()) return false;
+  
+  const loggedInHandle = getLoggedInUserHandle();
+  const authorHandle = getPrimaryTweetAuthorHandle();
+  
+  if (!loggedInHandle || !authorHandle) return false;
+  
+  return loggedInHandle === authorHandle;
+}
+
+function getReplyArticles() {
+  const allTweets = document.querySelectorAll('article[data-testid="tweet"]');
+  const replies = [];
+  let foundPrimary = false;
+  
+  for (const tweet of allTweets) {
+    if (tweet.getAttribute('tabindex') === '-1' && !foundPrimary) {
+      foundPrimary = true;
+      continue;
+    }
+    if (foundPrimary || !tweet.hasAttribute('tabindex')) {
+      replies.push(tweet);
+    }
+  }
+  
+  if (replies.length === 0 && allTweets.length > 1) {
+    return Array.from(allTweets).slice(1);
+  }
+  
+  return replies;
+}
+
+function getReplyText(article) {
+  const tweetText = article.querySelector('[data-testid="tweetText"]');
+  return (tweetText ? tweetText.textContent : '').trim().toLowerCase();
+}
+
+function textSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  
+  const aWords = new Set(a.split(/\s+/).filter(w => w.length > 2));
+  const bWords = new Set(b.split(/\s+/).filter(w => w.length > 2));
+  
+  if (aWords.size === 0 || bWords.size === 0) return 0;
+  
+  let intersection = 0;
+  for (const word of aWords) {
+    if (bWords.has(word)) intersection++;
+  }
+  
+  return (2 * intersection) / (aWords.size + bWords.size);
+}
+
+function findNearDuplicateClusters(replies) {
+  const SIMILARITY_THRESHOLD = 0.6;
+  const texts = replies.map(r => getReplyText(r));
+  const clusters = [];
+  const assigned = new Set();
+  
+  for (let i = 0; i < replies.length; i++) {
+    if (assigned.has(i)) continue;
+    
+    const cluster = [i];
+    assigned.add(i);
+    
+    for (let j = i + 1; j < replies.length; j++) {
+      if (assigned.has(j)) continue;
+      
+      if (texts[i] && texts[j] && textSimilarity(texts[i], texts[j]) >= SIMILARITY_THRESHOLD) {
+        cluster.push(j);
+        assigned.add(j);
+      }
+    }
+    
+    if (cluster.length >= 2) {
+      clusters.push(cluster);
+    }
+  }
+  
+  return clusters;
+}
+
+function createReplyCleanerButton() {
+  if (document.getElementById(REPLY_CLEANER_BUTTON_ID)) return;
+  if (!isViewingOwnPost()) return;
+  
+  const btn = document.createElement('button');
+  btn.id = REPLY_CLEANER_BUTTON_ID;
+  btn.type = 'button';
+  btn.className = 'quietx-reply-cleaner-btn';
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16"/>
+      <path d="M8 7V5.75A1.75 1.75 0 0 1 9.75 4h4.5A1.75 1.75 0 0 1 16 5.75V7"/>
+      <path d="M18 7l-.8 10.8A2.4 2.4 0 0 1 14.8 20H9.2a2.4 2.4 0 0 1-2.4-2.2L6 7"/>
+    </svg>
+    <span>清理</span>
+  `;
+  btn.title = 'Reply Cleaner - Bulk hide spam replies';
+  btn.addEventListener('click', openReplyCleanerPanel);
+  
+  document.documentElement.appendChild(btn);
+}
+
+function removeReplyCleanerButton() {
+  const btn = document.getElementById(REPLY_CLEANER_BUTTON_ID);
+  if (btn) btn.remove();
+}
+
+function openReplyCleanerPanel() {
+  if (document.getElementById(REPLY_CLEANER_PANEL_ID)) return;
+  
+  selectedReplies.clear();
+  
+  const replies = getReplyArticles();
+  const clusters = findNearDuplicateClusters(replies);
+  
+  const panel = document.createElement('div');
+  panel.id = REPLY_CLEANER_PANEL_ID;
+  panel.className = 'quietx-reply-cleaner-panel';
+  
+  let clustersHtml = '';
+  if (clusters.length > 0) {
+    clustersHtml = `
+      <div class="quietx-rc-section">
+        <div class="quietx-rc-section-title">Near-Duplicate Clusters</div>
+        ${clusters.map((cluster, idx) => {
+          const sampleText = getReplyText(replies[cluster[0]]).slice(0, 80);
+          return `
+            <button type="button" class="quietx-rc-cluster-btn" data-cluster="${idx}">
+              <span class="quietx-rc-cluster-count">${cluster.length} similar</span>
+              <span class="quietx-rc-cluster-sample">"${escapeHtml(sampleText)}${sampleText.length >= 80 ? '...' : ''}"</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+  
+  panel.innerHTML = `
+    <div class="quietx-rc-header">
+      <div class="quietx-rc-title">Reply Cleaner</div>
+      <button type="button" class="quietx-rc-close" aria-label="Close">×</button>
+    </div>
+    <div class="quietx-rc-body">
+      <div class="quietx-rc-info">
+        Select replies to hide. Click on replies in the page or use clusters below.
+        <br><small>Max ${REPLY_CLEANER_MAX_ITEMS} per run. Prefers "Hide reply" over Delete.</small>
+      </div>
+      ${clustersHtml}
+      <div class="quietx-rc-section">
+        <div class="quietx-rc-section-title">Manual Selection</div>
+        <div class="quietx-rc-manual-hint">Click replies on the page to select/deselect them.</div>
+      </div>
+      <div class="quietx-rc-selection-status">
+        Selected: <span id="quietx-rc-count">0</span> / ${REPLY_CLEANER_MAX_ITEMS}
+      </div>
+    </div>
+    <div class="quietx-rc-footer">
+      <button type="button" class="quietx-rc-cancel-btn">Cancel</button>
+      <button type="button" class="quietx-rc-confirm-btn" disabled>清理 (0)</button>
+    </div>
+  `;
+  
+  document.documentElement.appendChild(panel);
+  
+  panel.querySelector('.quietx-rc-close').addEventListener('click', closeReplyCleanerPanel);
+  panel.querySelector('.quietx-rc-cancel-btn').addEventListener('click', closeReplyCleanerPanel);
+  panel.querySelector('.quietx-rc-confirm-btn').addEventListener('click', () => confirmCleanup(replies));
+  
+  panel.querySelectorAll('.quietx-rc-cluster-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const clusterIdx = parseInt(btn.dataset.cluster, 10);
+      const cluster = clusters[clusterIdx];
+      if (!cluster) return;
+      
+      for (const replyIdx of cluster) {
+        const reply = replies[replyIdx];
+        if (reply && selectedReplies.size < REPLY_CLEANER_MAX_ITEMS) {
+          selectReply(reply, replies);
+        }
+      }
+      updateSelectionUI();
+    });
+  });
+  
+  enableReplySelection(replies);
+}
+
+function closeReplyCleanerPanel() {
+  const panel = document.getElementById(REPLY_CLEANER_PANEL_ID);
+  if (panel) panel.remove();
+  
+  disableReplySelection();
+  selectedReplies.clear();
+  
+  document.querySelectorAll('.quietx-rc-selected').forEach(el => {
+    el.classList.remove('quietx-rc-selected');
+  });
+}
+
+function enableReplySelection(replies) {
+  for (const reply of replies) {
+    reply.classList.add('quietx-rc-selectable');
+    reply.addEventListener('click', onReplyClick, true);
+  }
+}
+
+function disableReplySelection() {
+  document.querySelectorAll('.quietx-rc-selectable').forEach(el => {
+    el.classList.remove('quietx-rc-selectable');
+    el.removeEventListener('click', onReplyClick, true);
+  });
+}
+
+function onReplyClick(e) {
+  if (replyCleanerRunning) return;
+  
+  const reply = e.currentTarget;
+  if (!reply) return;
+  
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const replies = getReplyArticles();
+  
+  if (selectedReplies.has(reply)) {
+    deselectReply(reply);
+  } else if (selectedReplies.size < REPLY_CLEANER_MAX_ITEMS) {
+    selectReply(reply, replies);
+  }
+  
+  updateSelectionUI();
+}
+
+function selectReply(reply, replies) {
+  if (selectedReplies.size >= REPLY_CLEANER_MAX_ITEMS) return;
+  selectedReplies.add(reply);
+  reply.classList.add('quietx-rc-selected');
+}
+
+function deselectReply(reply) {
+  selectedReplies.delete(reply);
+  reply.classList.remove('quietx-rc-selected');
+}
+
+function updateSelectionUI() {
+  const count = selectedReplies.size;
+  const countEl = document.getElementById('quietx-rc-count');
+  if (countEl) countEl.textContent = count;
+  
+  const confirmBtn = document.querySelector('.quietx-rc-confirm-btn');
+  if (confirmBtn) {
+    confirmBtn.textContent = `清理 (${count})`;
+    confirmBtn.disabled = count === 0;
+  }
+}
+
+async function confirmCleanup(replies) {
+  const count = selectedReplies.size;
+  if (count === 0) return;
+  
+  const cappedCount = Math.min(count, REPLY_CLEANER_MAX_ITEMS);
+  
+  const confirmed = window.confirm(
+    `Hide ${cappedCount} selected ${cappedCount === 1 ? 'reply' : 'replies'}?\n\n` +
+    `This will click "Hide reply" (preferred) or "Delete" on each selected reply.\n` +
+    `Click interval: ${REPLY_CLEANER_CLICK_INTERVAL_MS}ms minimum.\n\n` +
+    `Cancel = no changes.`
+  );
+  
+  if (!confirmed) {
+    return;
+  }
+  
+  const targets = Array.from(selectedReplies).slice(0, REPLY_CLEANER_MAX_ITEMS);
+  
+  closeReplyCleanerPanel();
+  
+  await runCleanup(targets);
+}
+
+async function runCleanup(targets) {
+  replyCleanerRunning = true;
+  
+  let hiddenCount = 0;
+  let deletedCount = 0;
+  let errorMsg = null;
+  
+  showCleanerStatus(`Cleaning: 0/${targets.length}...`);
+  
+  for (let i = 0; i < targets.length; i++) {
+    const reply = targets[i];
+    
+    if (!document.body.contains(reply)) {
+      errorMsg = `Reply ${i + 1} no longer in DOM. Stopping.`;
+      break;
+    }
+    
+    const result = await hideOrDeleteReply(reply);
+    
+    if (result === 'hidden') {
+      hiddenCount++;
+    } else if (result === 'deleted') {
+      deletedCount++;
+    } else if (result === 'error') {
+      errorMsg = `Control missing on reply ${i + 1}. Stopping.`;
+      break;
+    }
+    
+    showCleanerStatus(`Cleaning: ${hiddenCount + deletedCount}/${targets.length}...`);
+    
+    if (i < targets.length - 1) {
+      await sleep(REPLY_CLEANER_CLICK_INTERVAL_MS);
+    }
+  }
+  
+  replyCleanerRunning = false;
+  
+  let statusMsg = '';
+  if (hiddenCount > 0) statusMsg += `Hidden: ${hiddenCount}`;
+  if (deletedCount > 0) statusMsg += (statusMsg ? ', ' : '') + `Deleted: ${deletedCount}`;
+  if (errorMsg) statusMsg += (statusMsg ? ' | ' : '') + errorMsg;
+  if (!statusMsg) statusMsg = 'No replies processed.';
+  
+  showCleanerStatus(statusMsg, 5000);
+}
+
+async function hideOrDeleteReply(reply) {
+  try {
+    const caretBtn = reply.querySelector('[data-testid="caret"], [aria-label="More"], [aria-label="更多"]');
+    if (!caretBtn) {
+      console.warn('Reply Cleaner: Caret/More button not found');
+      return 'error';
+    }
+    
+    caretBtn.scrollIntoView({ block: 'center', behavior: 'instant' });
+    await sleep(50);
+    caretBtn.click();
+    
+    let menuItems = [];
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await sleep(100);
+      menuItems = Array.from(document.querySelectorAll('[role="menuitem"]'));
+      if (menuItems.length > 0) break;
+    }
+    
+    if (menuItems.length === 0) {
+      console.warn('Reply Cleaner: Menu did not appear');
+      return 'error';
+    }
+    
+    let hideBtn = null;
+    let deleteBtn = null;
+    
+    for (const item of menuItems) {
+      const text = (item.textContent || '').toLowerCase().trim();
+      
+      if (text.includes('hide reply') || text.includes('隐藏回复') || text.includes('隱藏回覆')) {
+        hideBtn = item;
+      }
+      
+      if (text.includes('delete') || text.includes('删除') || text.includes('刪除')) {
+        if (!text.includes('undo')) {
+          deleteBtn = item;
+        }
+      }
+    }
+    
+    if (hideBtn) {
+      hideBtn.click();
+      await sleep(150);
+      return 'hidden';
+    }
+    
+    if (deleteBtn) {
+      deleteBtn.click();
+      await sleep(200);
+      
+      const confirmBtn = document.querySelector('[data-testid="confirmationSheetConfirm"]');
+      if (confirmBtn) {
+        confirmBtn.click();
+        await sleep(150);
+      }
+      return 'deleted';
+    }
+    
+    caretBtn.click();
+    console.warn('Reply Cleaner: Neither Hide nor Delete found in menu');
+    return 'error';
+    
+  } catch (err) {
+    console.error('Reply Cleaner error:', err);
+    return 'error';
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+let cleanerStatusEl = null;
+let cleanerStatusTimer = null;
+
+function showCleanerStatus(message, autoHideMs = 0) {
+  if (!cleanerStatusEl) {
+    cleanerStatusEl = document.createElement('div');
+    cleanerStatusEl.className = 'quietx-cleaner-status';
+    document.documentElement.appendChild(cleanerStatusEl);
+  }
+  
+  cleanerStatusEl.textContent = message;
+  cleanerStatusEl.style.display = 'block';
+  
+  if (cleanerStatusTimer) {
+    clearTimeout(cleanerStatusTimer);
+    cleanerStatusTimer = null;
+  }
+  
+  if (autoHideMs > 0) {
+    cleanerStatusTimer = setTimeout(() => {
+      if (cleanerStatusEl) {
+        cleanerStatusEl.style.display = 'none';
+      }
+    }, autoHideMs);
+  }
+}
+
+function setupReplyCleanerObserver() {
+  if (replyCleanerObserver) return;
+  
+  let lastPath = window.location.pathname;
+  let checkTimeout = null;
+  
+  const checkAndSetup = () => {
+    if (checkTimeout) clearTimeout(checkTimeout);
+    checkTimeout = setTimeout(() => {
+      if (isCleanerOwnRepliesEnabled && isViewingOwnPost()) {
+        createReplyCleanerButton();
+      } else {
+        removeReplyCleanerButton();
+        closeReplyCleanerPanel();
+      }
+    }, 500);
+  };
+  
+  replyCleanerObserver = new MutationObserver(() => {
+    const currentPath = window.location.pathname;
+    if (currentPath !== lastPath) {
+      lastPath = currentPath;
+      checkAndSetup();
+    }
+  });
+  
+  replyCleanerObserver.observe(document.body, { childList: true, subtree: true });
+  
+  checkAndSetup();
+}
+
+function teardownReplyCleanerObserver() {
+  if (replyCleanerObserver) {
+    replyCleanerObserver.disconnect();
+    replyCleanerObserver = null;
+  }
+  removeReplyCleanerButton();
+  closeReplyCleanerPanel();
+}
