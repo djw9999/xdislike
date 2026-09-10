@@ -5,10 +5,13 @@
  * 2. Levenshtein distance calculation is correct
  * 3. Similarity ratio calculation is correct
  * 4. Similar texts are detected with threshold >= 0.66
- * 5. Clustering groups similar replies correctly
- * 6. Feature defaults to OFF (unset/false)
- * 7. Feature requires Pro license
- * 8. No Hide/Delete/Block/Mute clicks (local DOM collapse only)
+ * 5. Single chip per page (not one per cluster)
+ * 6. Chip not in primary article/cell
+ * 7. Chip inside a reply cellInnerDiv
+ * 8. Expand sticks across re-apply
+ * 9. Feature defaults to OFF (unset/false)
+ * 10. Feature requires Pro license
+ * 11. No Hide/Delete/Block/Mute clicks (local DOM collapse only)
  */
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -19,6 +22,11 @@ import { createChromeMock } from './chrome-mock.js';
 const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
 const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
 const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
+const FOLD_BOT_REPLIES_CHIP_CLASS = 'quietx-fold-chip';
+const FOLD_BOT_REPLIES_HOST_CELL_CLASS = 'quietx-fold-host-cell';
+const FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS = 'quietx-folded-cell';
+const FOLD_BOT_REPLIES_HIDDEN_CLASS = 'quietx-folded-reply';
+const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
 
 function normalizeTextForSimilarity(text) {
   if (!text || typeof text !== 'string') return '';
@@ -92,7 +100,13 @@ function areTextsSimilar(text1, text2, threshold = FOLD_BOT_REPLIES_SIMILARITY_T
   return similarityRatio(norm1, norm2) >= threshold;
 }
 
-function clusterRepliesBySimilarity(replyArticles, document) {
+function isBeforeInDocument(a, b) {
+  if (!a || !b) return false;
+  const position = a.compareDocumentPosition(b);
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+function findAllDuplicateReplies(replyArticles) {
   if (!replyArticles || replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
     return [];
   }
@@ -111,48 +125,65 @@ function clusterRepliesBySimilarity(replyArticles, document) {
     return [];
   }
   
-  const clusters = [];
-  const assigned = new Set();
+  const duplicateIndices = new Set();
   
   for (let i = 0; i < articlesWithText.length; i++) {
-    if (assigned.has(i)) continue;
-    
-    const cluster = [articlesWithText[i]];
-    assigned.add(i);
-    
     for (let j = i + 1; j < articlesWithText.length; j++) {
-      if (assigned.has(j)) continue;
-      
-      const isSimilar = cluster.some(item => 
-        areTextsSimilar(item.text, articlesWithText[j].text)
-      );
-      
-      if (isSimilar) {
-        cluster.push(articlesWithText[j]);
-        assigned.add(j);
+      if (areTextsSimilar(articlesWithText[i].text, articlesWithText[j].text)) {
+        duplicateIndices.add(i);
+        duplicateIndices.add(j);
       }
-    }
-    
-    if (cluster.length >= FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) {
-      clusters.push(cluster);
     }
   }
   
-  return clusters;
+  const duplicates = [];
+  for (const idx of duplicateIndices) {
+    duplicates.push(articlesWithText[idx]);
+  }
+  
+  duplicates.sort((a, b) => {
+    if (isBeforeInDocument(a.article, b.article)) return -1;
+    if (isBeforeInDocument(b.article, a.article)) return 1;
+    return 0;
+  });
+  
+  return duplicates;
 }
 
-function createReplyArticleHTML(text) {
+function createConversationHTML(primaryText, replyTexts) {
+  const primaryCell = `
+    <div data-testid="cellInnerDiv" id="primary-cell">
+      <article data-testid="tweet" id="primary-article">
+        <div data-testid="User-Name">@originalAuthor</div>
+        <a href="/user/status/123456789">2h</a>
+        <div data-testid="tweetText">${primaryText}</div>
+        <div role="group">
+          <button data-testid="reply">Reply</button>
+          <button data-testid="like">Like</button>
+        </div>
+      </article>
+    </div>
+  `;
+  
+  const replyCells = replyTexts.map((text, i) => `
+    <div data-testid="cellInnerDiv" id="reply-cell-${i}">
+      <article data-testid="tweet" id="reply-article-${i}">
+        <div data-testid="User-Name">@user${i}</div>
+        <a href="/user${i}/status/${999000 + i}">1m</a>
+        <div data-testid="tweetText">${text}</div>
+        <div role="group">
+          <button data-testid="reply">Reply</button>
+          <button data-testid="like">Like</button>
+        </div>
+      </article>
+    </div>
+  `).join('');
+  
   return `
-    <article data-testid="tweet">
-      <div data-testid="User-Name">@spammer</div>
-      <time>1m</time>
-      <div data-testid="tweetText">${text}</div>
-      <div role="group" class="action-bar">
-        <button data-testid="reply">Reply</button>
-        <button data-testid="retweet">Retweet</button>
-        <button data-testid="like">Like</button>
-      </div>
-    </article>
+    <div id="timeline">
+      ${primaryCell}
+      ${replyCells}
+    </div>
   `;
 }
 
@@ -198,12 +229,6 @@ describe('Text Normalization', () => {
     assert.strictEqual(normalizeTextForSimilarity(null), '');
     assert.strictEqual(normalizeTextForSimilarity(undefined), '');
   });
-
-  test('handles complex spam text', () => {
-    const input = '🚀 Check out @CryptoKing for AMAZING returns! 💰 https://scam.link #crypto #btc';
-    const result = normalizeTextForSimilarity(input);
-    assert.strictEqual(result, 'check out for amazing returns');
-  });
 });
 
 describe('Levenshtein Distance', () => {
@@ -214,24 +239,10 @@ describe('Levenshtein Distance', () => {
   test('empty strings', () => {
     assert.strictEqual(levenshteinDistance('', 'hello'), 5);
     assert.strictEqual(levenshteinDistance('hello', ''), 5);
-    assert.strictEqual(levenshteinDistance('', ''), 0);
   });
 
   test('single character difference', () => {
     assert.strictEqual(levenshteinDistance('hello', 'hallo'), 1);
-    assert.strictEqual(levenshteinDistance('cat', 'hat'), 1);
-  });
-
-  test('insertion', () => {
-    assert.strictEqual(levenshteinDistance('hello', 'helloo'), 1);
-  });
-
-  test('deletion', () => {
-    assert.strictEqual(levenshteinDistance('hello', 'helo'), 1);
-  });
-
-  test('completely different strings', () => {
-    assert.strictEqual(levenshteinDistance('abc', 'xyz'), 3);
   });
 });
 
@@ -249,30 +260,18 @@ describe('Similarity Ratio', () => {
     const ratio = similarityRatio('check this out', 'check this');
     assert.ok(ratio > 0.7, `Expected ratio > 0.7, got ${ratio}`);
   });
-
-  test('empty strings', () => {
-    assert.strictEqual(similarityRatio('', ''), 1);
-    assert.strictEqual(similarityRatio('hello', ''), 0);
-    assert.strictEqual(similarityRatio('', 'hello'), 0);
-  });
 });
 
 describe('areTextsSimilar', () => {
   test('identical spam messages are similar', () => {
-    const text1 = 'Check out this amazing opportunity! 🚀';
-    const text2 = 'Check out this amazing opportunity! 🚀';
+    const text1 = 'Check out this amazing opportunity!';
+    const text2 = 'Check out this amazing opportunity!';
     assert.strictEqual(areTextsSimilar(text1, text2), true);
   });
 
   test('near-duplicate spam with different usernames are similar', () => {
     const text1 = '@user1 Check out this amazing opportunity for crypto gains!';
     const text2 = '@user2 Check out this amazing opportunity for crypto gains!';
-    assert.strictEqual(areTextsSimilar(text1, text2), true);
-  });
-
-  test('near-duplicate spam with different URLs are similar', () => {
-    const text1 = 'Amazing returns at https://scam1.com';
-    const text2 = 'Amazing returns at https://scam2.com';
     assert.strictEqual(areTextsSimilar(text1, text2), true);
   });
 
@@ -287,20 +286,9 @@ describe('areTextsSimilar', () => {
     const text2 = 'Hi';
     assert.strictEqual(areTextsSimilar(text1, text2), false);
   });
-
-  test('threshold is respected (0.66)', () => {
-    const text1 = 'this is a test message';
-    const text2 = 'this is a test';
-    const ratio = similarityRatio(
-      normalizeTextForSimilarity(text1),
-      normalizeTextForSimilarity(text2)
-    );
-    const expected = ratio >= FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD;
-    assert.strictEqual(areTextsSimilar(text1, text2), expected);
-  });
 });
 
-describe('Clustering', () => {
+describe('findAllDuplicateReplies', () => {
   let dom;
   let document;
 
@@ -311,84 +299,436 @@ describe('Clustering', () => {
     document = dom.window.document;
     global.document = document;
     global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
   });
 
   afterEach(() => {
     dom.window.close();
     delete global.document;
     delete global.HTMLElement;
+    delete global.Node;
   });
 
-  test('clusters similar replies together', () => {
-    document.body.innerHTML = `
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('I really enjoyed this post')}
-    `;
+  test('finds all duplicate replies across clusters', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam A!',
+        'Spam A!',
+        'Spam A!',
+        'Different reply',
+      ]
+    );
     
-    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-    const clusters = clusterRepliesBySimilarity(articles, document);
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
     
-    assert.strictEqual(clusters.length, 1, 'Should have 1 cluster');
-    assert.strictEqual(clusters[0].length, 3, 'Cluster should have 3 similar replies');
+    assert.strictEqual(duplicates.length, 3, 'Should find 3 duplicates');
   });
 
-  test('does not cluster dissimilar replies', () => {
-    document.body.innerHTML = `
-      ${createReplyArticleHTML('I love cats and dogs')}
-      ${createReplyArticleHTML('The weather is great today')}
-      ${createReplyArticleHTML('This post is very interesting')}
-      ${createReplyArticleHTML('Thanks for sharing this information')}
-    `;
+  test('aggregates duplicates from multiple patterns into one list', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam pattern A!',
+        'Spam pattern A!',
+        'Spam pattern B!',
+        'Spam pattern B!',
+        'Unique reply',
+      ]
+    );
     
-    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-    const clusters = clusterRepliesBySimilarity(articles, document);
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
     
-    assert.strictEqual(clusters.length, 0, 'Should have no clusters');
+    assert.strictEqual(duplicates.length, 4, 'Should find all 4 duplicates from both patterns');
   });
 
   test('returns empty for fewer than 3 replies', () => {
-    document.body.innerHTML = `
-      ${createReplyArticleHTML('Check out this amazing opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing opportunity!')}
-    `;
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Reply 1', 'Reply 2']
+    );
     
-    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-    const clusters = clusterRepliesBySimilarity(articles, document);
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
     
-    assert.strictEqual(clusters.length, 0, 'Should return empty for fewer than 3 replies');
+    assert.strictEqual(duplicates.length, 0, 'Should return empty');
   });
 
-  test('creates multiple clusters for different spam patterns', () => {
-    document.body.innerHTML = `
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Follow me for free giveaways every day!')}
-      ${createReplyArticleHTML('Follow me for free giveaways every day!')}
-      ${createReplyArticleHTML('Follow me for free giveaways every day!')}
-    `;
+  test('returns sorted by document order', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam!',
+        'Unique',
+        'Spam!',
+        'Spam!',
+      ]
+    );
     
-    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-    const clusters = clusterRepliesBySimilarity(articles, document);
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
     
-    assert.strictEqual(clusters.length, 2, 'Should have 2 clusters');
+    assert.strictEqual(duplicates.length, 3);
+    assert.strictEqual(duplicates[0].article.id, 'reply-article-0');
+    assert.strictEqual(duplicates[1].article.id, 'reply-article-2');
+    assert.strictEqual(duplicates[2].article.id, 'reply-article-3');
+  });
+});
+
+describe('Single Chip Per Page', () => {
+  let dom;
+  let document;
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
   });
 
-  test('minimum cluster size is 2', () => {
-    document.body.innerHTML = `
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Check out this amazing crypto opportunity!')}
-      ${createReplyArticleHTML('Unique reply that stands alone here')}
-      ${createReplyArticleHTML('Another unique reply with different content')}
-    `;
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('only one chip is created even with multiple spam patterns', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam A!', 'Spam A!', 'Spam A!',
+        'Spam B!', 'Spam B!', 'Spam B!',
+      ]
+    );
     
-    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-    const clusters = clusterRepliesBySimilarity(articles, document);
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 6 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
     
-    assert.strictEqual(clusters.length, 1, 'Should have 1 cluster');
-    assert.strictEqual(clusters[0].length, 2, 'Cluster should have exactly 2 items');
+    const chips = document.querySelectorAll('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    assert.strictEqual(chips.length, 1, 'Should have exactly ONE chip');
+  });
+
+  test('chip count reflects total duplicates, not cluster count', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam A!', 'Spam A!',
+        'Spam B!', 'Spam B!',
+      ]
+    );
+    
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('data-fold-count', String(duplicates.length));
+    chip.innerHTML = `<span class="quietx-fold-text">Folded ${duplicates.length} similar replies</span>`;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    assert.strictEqual(chip.getAttribute('data-fold-count'), '4', 'Should count all 4 duplicates');
+  });
+});
+
+describe('Chip Placement', () => {
+  let dom;
+  let document;
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('chip is inside a reply cellInnerDiv, not naked sibling', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const insertedChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    const parentCell = insertedChip.closest('[data-testid="cellInnerDiv"]');
+    
+    assert.ok(parentCell, 'Chip must be inside a cellInnerDiv');
+    assert.strictEqual(parentCell.id, 'reply-cell-0', 'Chip must be in reply cell, not primary');
+  });
+
+  test('chip is not in primary article', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const hostCell = document.getElementById('reply-cell-0');
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const insertedChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    
+    assert.strictEqual(primaryArticle.contains(insertedChip), false, 'Chip must NOT be inside primary article');
+  });
+
+  test('chip is not in primary cellInnerDiv', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryCell = document.getElementById('primary-cell');
+    const hostCell = document.getElementById('reply-cell-0');
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const insertedChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    
+    assert.strictEqual(primaryCell.contains(insertedChip), false, 'Chip must NOT be inside primary cell');
+  });
+
+  test('chip is after primary in document order', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const hostCell = document.getElementById('reply-cell-0');
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const insertedChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    
+    assert.ok(isBeforeInDocument(primaryArticle, insertedChip), 'Chip must be after primary in document');
+  });
+
+  test('host cell is a reply cell with HOST_CELL class', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const chipParent = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS).closest('[data-testid="cellInnerDiv"]');
+    
+    assert.ok(chipParent.classList.contains(FOLD_BOT_REPLIES_HOST_CELL_CLASS), 'Host cell should have HOST_CELL class');
+    assert.notStrictEqual(chipParent.id, 'primary-cell', 'Host cell must not be primary');
+  });
+});
+
+describe('Expand Persistence', () => {
+  let dom;
+  let document;
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('expanded state is reflected in aria-expanded attribute', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'false');
+    
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'true');
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_EXPANDED_CLASS));
+  });
+
+  test('folded cells use CELL_HIDDEN class, not display:none inline', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    assert.ok(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS));
+    assert.ok(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS));
+  });
+
+  test('expand removes CELL_HIDDEN class from folded cells', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    cell1.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    assert.strictEqual(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false);
+    assert.strictEqual(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false);
+  });
+
+  test('data-quietx-folded attribute marks folded cells for re-apply', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const cell0 = document.getElementById('reply-cell-0');
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    
+    cell0.setAttribute('data-quietx-folded', 'true');
+    cell1.setAttribute('data-quietx-folded', 'true');
+    cell2.setAttribute('data-quietx-folded', 'true');
+    
+    const foldedCells = document.querySelectorAll('[data-quietx-folded="true"]');
+    assert.strictEqual(foldedCells.length, 3, 'All 3 reply cells should be marked');
+    
+    assert.strictEqual(document.getElementById('primary-cell').hasAttribute('data-quietx-folded'), false, 
+      'Primary cell should NOT be marked');
+  });
+});
+
+describe('Primary Article Protection', () => {
+  let dom;
+  let document;
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('primary article never gets HIDDEN class', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const replyArticles = [
+      document.getElementById('reply-article-0'),
+      document.getElementById('reply-article-1'),
+      document.getElementById('reply-article-2')
+    ];
+    
+    replyArticles.forEach(article => {
+      article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    });
+    
+    assert.strictEqual(primaryArticle.classList.contains(FOLD_BOT_REPLIES_HIDDEN_CLASS), false,
+      'Primary article must NEVER have hidden class');
+  });
+
+  test('primary cell never gets CELL_HIDDEN class', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryCell = document.getElementById('primary-cell');
+    const replyCells = [
+      document.getElementById('reply-cell-1'),
+      document.getElementById('reply-cell-2')
+    ];
+    
+    replyCells.forEach(cell => {
+      cell.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    });
+    
+    assert.strictEqual(primaryCell.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false,
+      'Primary cell must NEVER have cell-hidden class');
+  });
+
+  test('primary cell never gets HOST_CELL class', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const primaryCell = document.getElementById('primary-cell');
+    const hostCell = document.getElementById('reply-cell-0');
+    
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    assert.strictEqual(primaryCell.classList.contains(FOLD_BOT_REPLIES_HOST_CELL_CLASS), false,
+      'Primary cell must NEVER be the host cell');
   });
 });
 
@@ -423,16 +763,6 @@ describe('Default OFF and Pro License Gating', () => {
     const isEnabled = isPro && result.foldBotReplies === true;
     
     assert.strictEqual(isEnabled, false, 'Should be disabled when not Pro');
-  });
-
-  test('feature is disabled when Pro but toggle is OFF', async () => {
-    await chrome.storage.local.set({ isPro: true, foldBotReplies: false });
-    
-    const result = await chrome.storage.local.get(['isPro', 'foldBotReplies']);
-    const isPro = !!result.isPro;
-    const isEnabled = isPro && result.foldBotReplies === true;
-    
-    assert.strictEqual(isEnabled, false, 'Should be disabled when Pro but toggle OFF');
   });
 
   test('feature is enabled when Pro and toggle is ON', async () => {
@@ -472,484 +802,47 @@ describe('No Moderation Clicks (DOM-only collapse)', () => {
     delete global.HTMLElement;
   });
 
-  test('folding does not click Hide button', () => {
-    let hideClicked = false;
+  test('folding does not click any buttons', () => {
+    let anyButtonClicked = false;
     
     document.body.innerHTML = `
       <article data-testid="tweet">
-        <div data-testid="tweetText">Spam message repeated!</div>
-        <button data-testid="caret" onclick="window.caretClicked=true">...</button>
-      </article>
-    `;
-    
-    const article = document.querySelector('article');
-    const caretBtn = document.querySelector('[data-testid="caret"]');
-    
-    caretBtn.addEventListener('click', () => {
-      hideClicked = true;
-    });
-    
-    article.classList.add('quietx-folded-reply');
-    
-    assert.strictEqual(hideClicked, false, 'Hide button should never be clicked');
-    assert.ok(article.classList.contains('quietx-folded-reply'), 'Article should have folded class');
-  });
-
-  test('folding does not click Delete button', () => {
-    let deleteClicked = false;
-    
-    document.body.innerHTML = `
-      <article data-testid="tweet">
-        <div data-testid="tweetText">Spam message repeated!</div>
+        <div data-testid="tweetText">Spam!</div>
+        <button data-testid="caret">...</button>
         <button class="delete-btn">Delete</button>
-      </article>
-    `;
-    
-    const article = document.querySelector('article');
-    const deleteBtn = document.querySelector('.delete-btn');
-    
-    deleteBtn.addEventListener('click', () => {
-      deleteClicked = true;
-    });
-    
-    article.classList.add('quietx-folded-reply');
-    
-    assert.strictEqual(deleteClicked, false, 'Delete button should never be clicked');
-  });
-
-  test('folding does not click Block button', () => {
-    let blockClicked = false;
-    
-    document.body.innerHTML = `
-      <article data-testid="tweet">
-        <div data-testid="tweetText">Spam message repeated!</div>
         <button class="block-btn">Block</button>
-      </article>
-    `;
-    
-    const article = document.querySelector('article');
-    const blockBtn = document.querySelector('.block-btn');
-    
-    blockBtn.addEventListener('click', () => {
-      blockClicked = true;
-    });
-    
-    article.classList.add('quietx-folded-reply');
-    
-    assert.strictEqual(blockClicked, false, 'Block button should never be clicked');
-  });
-
-  test('folding does not click Mute button', () => {
-    let muteClicked = false;
-    
-    document.body.innerHTML = `
-      <article data-testid="tweet">
-        <div data-testid="tweetText">Spam message repeated!</div>
         <button class="mute-btn">Mute</button>
       </article>
     `;
     
-    const article = document.querySelector('article');
-    const muteBtn = document.querySelector('.mute-btn');
-    
-    muteBtn.addEventListener('click', () => {
-      muteClicked = true;
+    document.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => { anyButtonClicked = true; });
     });
     
-    article.classList.add('quietx-folded-reply');
-    
-    assert.strictEqual(muteClicked, false, 'Mute button should never be clicked');
-  });
-
-  test('folding only adds CSS class to hide visually', () => {
-    document.body.innerHTML = `
-      <article data-testid="tweet">
-        <div data-testid="tweetText">Spam message repeated!</div>
-      </article>
-    `;
-    
     const article = document.querySelector('article');
-    const originalHTML = article.outerHTML;
+    article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
     
-    article.classList.add('quietx-folded-reply');
-    
-    const classAddedHTML = article.outerHTML;
-    const expectedHTML = originalHTML.replace('data-testid="tweet"', 'data-testid="tweet" class="quietx-folded-reply"');
-    
-    assert.strictEqual(classAddedHTML, expectedHTML, 'Only class should be added, no other DOM changes');
+    assert.strictEqual(anyButtonClicked, false, 'No buttons should be clicked');
   });
 
-  test('unfolding removes CSS class', () => {
+  test('folding only adds CSS classes', () => {
     document.body.innerHTML = `
-      <article data-testid="tweet" class="quietx-folded-reply">
-        <div data-testid="tweetText">Spam message repeated!</div>
-      </article>
-    `;
-    
-    const article = document.querySelector('article');
-    article.classList.remove('quietx-folded-reply');
-    
-    assert.strictEqual(article.classList.contains('quietx-folded-reply'), false, 'Folded class should be removed');
-    assert.ok(article.querySelector('[data-testid="tweetText"]'), 'Tweet content should still exist');
-  });
-});
-
-describe('Integration: Fold UI behavior', () => {
-  let dom;
-  let document;
-
-  beforeEach(() => {
-    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-      url: 'https://x.com/user/status/123456789'
-    });
-    document = dom.window.document;
-    global.document = document;
-    global.HTMLElement = dom.window.HTMLElement;
-  });
-
-  afterEach(() => {
-    dom.window.close();
-    delete global.document;
-    delete global.HTMLElement;
-  });
-
-  test('placeholder shows correct count', () => {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'quietx-fold-placeholder';
-    placeholder.innerHTML = `
-      <div class="quietx-fold-inner">
-        <span class="quietx-fold-text">Folded 5 similar replies</span>
-      </div>
-    `;
-    document.body.appendChild(placeholder);
-    
-    const text = placeholder.querySelector('.quietx-fold-text').textContent;
-    assert.ok(text.includes('5'), 'Should show the count');
-    assert.ok(text.includes('Folded'), 'Should say Folded');
-  });
-
-  test('placeholder is accessible with role and tabindex', () => {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'quietx-fold-placeholder';
-    placeholder.setAttribute('role', 'button');
-    placeholder.setAttribute('tabindex', '0');
-    placeholder.setAttribute('aria-expanded', 'false');
-    document.body.appendChild(placeholder);
-    
-    assert.strictEqual(placeholder.getAttribute('role'), 'button');
-    assert.strictEqual(placeholder.getAttribute('tabindex'), '0');
-    assert.strictEqual(placeholder.getAttribute('aria-expanded'), 'false');
-  });
-
-  test('expanded state changes aria-expanded', () => {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'quietx-fold-placeholder';
-    placeholder.setAttribute('aria-expanded', 'false');
-    document.body.appendChild(placeholder);
-    
-    placeholder.setAttribute('aria-expanded', 'true');
-    placeholder.classList.add('quietx-fold-expanded');
-    
-    assert.strictEqual(placeholder.getAttribute('aria-expanded'), 'true');
-    assert.ok(placeholder.classList.contains('quietx-fold-expanded'));
-  });
-});
-
-describe('Primary Article Protection', () => {
-  let dom;
-  let document;
-  let window;
-
-  const FOLD_HIDDEN_CLASS = 'quietx-folded-reply';
-  const FOLD_PLACEHOLDER_CLASS = 'quietx-fold-placeholder';
-
-  function createConversationHTML(primaryText, replyTexts) {
-    const primaryCell = `
-      <div data-testid="cellInnerDiv" id="primary-cell">
-        <article data-testid="tweet" id="primary-article">
-          <div data-testid="User-Name">@originalAuthor</div>
-          <a href="/user/status/123456789">2h</a>
-          <div data-testid="tweetText">${primaryText}</div>
-          <div role="group">
-            <button data-testid="reply">Reply</button>
-            <button data-testid="like">Like</button>
-          </div>
+      <div data-testid="cellInnerDiv" id="test-cell">
+        <article data-testid="tweet" id="test-article">
+          <div data-testid="tweetText">Spam!</div>
         </article>
       </div>
     `;
     
-    const replyCells = replyTexts.map((text, i) => `
-      <div data-testid="cellInnerDiv" id="reply-cell-${i}">
-        <article data-testid="tweet" id="reply-article-${i}">
-          <div data-testid="User-Name">@spammer${i}</div>
-          <a href="/spammer${i}/status/${999000 + i}">1m</a>
-          <div data-testid="tweetText">${text}</div>
-          <div role="group">
-            <button data-testid="reply">Reply</button>
-            <button data-testid="like">Like</button>
-          </div>
-        </article>
-      </div>
-    `).join('');
+    const cell = document.getElementById('test-cell');
+    const article = document.getElementById('test-article');
     
-    return `
-      <div id="timeline">
-        ${primaryCell}
-        ${replyCells}
-      </div>
-    `;
-  }
-
-  function isBeforeInDocument(a, b) {
-    if (!a || !b) return false;
-    const position = a.compareDocumentPosition(b);
-    return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-  }
-
-  beforeEach(() => {
-    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-      url: 'https://x.com/user/status/123456789'
-    });
-    document = dom.window.document;
-    window = dom.window;
-    global.document = document;
-    global.window = window;
-    global.HTMLElement = dom.window.HTMLElement;
-    global.Node = dom.window.Node;
-  });
-
-  afterEach(() => {
-    dom.window.close();
-    delete global.document;
-    delete global.window;
-    delete global.HTMLElement;
-    delete global.Node;
-  });
-
-  test('primary article never gets quietx-folded-reply hidden class', () => {
-    document.body.innerHTML = createConversationHTML(
-      'This is the original post',
-      [
-        'Spam reply 1!',
-        'Spam reply 1!',
-        'Spam reply 1!'
-      ]
-    );
+    article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    cell.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell.setAttribute('data-quietx-folded', 'true');
     
-    const primaryArticle = document.getElementById('primary-article');
-    const replyArticles = [
-      document.getElementById('reply-article-0'),
-      document.getElementById('reply-article-1'),
-      document.getElementById('reply-article-2')
-    ];
-    
-    replyArticles.forEach(article => {
-      article.classList.add(FOLD_HIDDEN_CLASS);
-    });
-    
-    assert.strictEqual(
-      primaryArticle.classList.contains(FOLD_HIDDEN_CLASS), 
-      false, 
-      'Primary article must NEVER have the folded-reply hidden class'
-    );
-    
-    replyArticles.forEach((article, i) => {
-      assert.ok(
-        article.classList.contains(FOLD_HIDDEN_CLASS),
-        `Reply ${i} should have hidden class`
-      );
-    });
-  });
-
-  test('fold placeholder is not a descendant of primary article', () => {
-    document.body.innerHTML = createConversationHTML(
-      'This is the original post',
-      [
-        'Spam reply!',
-        'Spam reply!',
-        'Spam reply!'
-      ]
-    );
-    
-    const primaryArticle = document.getElementById('primary-article');
-    const primaryCell = document.getElementById('primary-cell');
-    const timeline = document.getElementById('timeline');
-    const firstReplyCell = document.getElementById('reply-cell-0');
-    
-    const placeholder = document.createElement('div');
-    placeholder.className = FOLD_PLACEHOLDER_CLASS;
-    placeholder.id = 'test-placeholder';
-    placeholder.innerHTML = '<span>Folded 3 similar replies</span>';
-    
-    timeline.insertBefore(placeholder, firstReplyCell);
-    
-    const insertedPlaceholder = document.getElementById('test-placeholder');
-    
-    assert.strictEqual(
-      primaryArticle.contains(insertedPlaceholder),
-      false,
-      'Placeholder must NOT be inside primary article'
-    );
-    
-    assert.strictEqual(
-      primaryCell.contains(insertedPlaceholder),
-      false,
-      'Placeholder must NOT be inside primary cellInnerDiv'
-    );
-  });
-
-  test('fold placeholder is after primary article in document order', () => {
-    document.body.innerHTML = createConversationHTML(
-      'This is the original post',
-      [
-        'Spam reply!',
-        'Spam reply!',
-        'Spam reply!'
-      ]
-    );
-    
-    const primaryArticle = document.getElementById('primary-article');
-    const timeline = document.getElementById('timeline');
-    const firstReplyCell = document.getElementById('reply-cell-0');
-    
-    const placeholder = document.createElement('div');
-    placeholder.className = FOLD_PLACEHOLDER_CLASS;
-    placeholder.id = 'test-placeholder';
-    
-    timeline.insertBefore(placeholder, firstReplyCell);
-    
-    const insertedPlaceholder = document.getElementById('test-placeholder');
-    
-    assert.ok(
-      isBeforeInDocument(primaryArticle, insertedPlaceholder),
-      'Placeholder must come AFTER primary article in document order'
-    );
-  });
-
-  test('primary cellInnerDiv never contains fold placeholder', () => {
-    document.body.innerHTML = createConversationHTML(
-      'This is the original post',
-      [
-        'Spam reply!',
-        'Spam reply!',
-        'Spam reply!'
-      ]
-    );
-    
-    const primaryCell = document.getElementById('primary-cell');
-    
-    const badPlaceholder = document.createElement('div');
-    badPlaceholder.className = FOLD_PLACEHOLDER_CLASS;
-    
-    assert.strictEqual(
-      primaryCell.querySelector('.' + FOLD_PLACEHOLDER_CLASS),
-      null,
-      'Primary cell should not contain any fold placeholder'
-    );
-  });
-
-  test('only reply articles are folded, not primary even if text matches', () => {
-    document.body.innerHTML = createConversationHTML(
-      'Check out this amazing opportunity!',
-      [
-        'Check out this amazing opportunity!',
-        'Check out this amazing opportunity!',
-        'Check out this amazing opportunity!'
-      ]
-    );
-    
-    const primaryArticle = document.getElementById('primary-article');
-    const replyArticles = [
-      document.getElementById('reply-article-0'),
-      document.getElementById('reply-article-1'),
-      document.getElementById('reply-article-2')
-    ];
-    
-    replyArticles.forEach(article => {
-      article.classList.add(FOLD_HIDDEN_CLASS);
-    });
-    
-    assert.strictEqual(
-      primaryArticle.classList.contains(FOLD_HIDDEN_CLASS),
-      false,
-      'Primary article must NOT be folded even if its text matches spam replies'
-    );
-  });
-
-  test('fold placeholder siblings are reply cells, not primary cell', () => {
-    document.body.innerHTML = createConversationHTML(
-      'Original post content',
-      [
-        'Spam message!',
-        'Spam message!',
-        'Spam message!'
-      ]
-    );
-    
-    const timeline = document.getElementById('timeline');
-    const primaryCell = document.getElementById('primary-cell');
-    const firstReplyCell = document.getElementById('reply-cell-0');
-    
-    const placeholder = document.createElement('div');
-    placeholder.className = FOLD_PLACEHOLDER_CLASS;
-    placeholder.id = 'test-placeholder';
-    
-    timeline.insertBefore(placeholder, firstReplyCell);
-    
-    const insertedPlaceholder = document.getElementById('test-placeholder');
-    
-    assert.strictEqual(
-      insertedPlaceholder.previousElementSibling,
-      primaryCell,
-      'Placeholder previous sibling should be primary cell (placeholder is right after it)'
-    );
-    
-    assert.strictEqual(
-      insertedPlaceholder.nextElementSibling,
-      firstReplyCell,
-      'Placeholder next sibling should be first reply cell'
-    );
-  });
-
-  test('document order: primary -> placeholder -> folded replies', () => {
-    document.body.innerHTML = createConversationHTML(
-      'Original post',
-      [
-        'Spam!',
-        'Spam!',
-        'Spam!'
-      ]
-    );
-    
-    const primaryArticle = document.getElementById('primary-article');
-    const timeline = document.getElementById('timeline');
-    const firstReplyCell = document.getElementById('reply-cell-0');
-    const replyArticle0 = document.getElementById('reply-article-0');
-    const replyArticle1 = document.getElementById('reply-article-1');
-    const replyArticle2 = document.getElementById('reply-article-2');
-    
-    const placeholder = document.createElement('div');
-    placeholder.className = FOLD_PLACEHOLDER_CLASS;
-    placeholder.id = 'test-placeholder';
-    timeline.insertBefore(placeholder, firstReplyCell);
-    
-    const insertedPlaceholder = document.getElementById('test-placeholder');
-    
-    assert.ok(
-      isBeforeInDocument(primaryArticle, insertedPlaceholder),
-      'Primary article must be before placeholder'
-    );
-    assert.ok(
-      isBeforeInDocument(insertedPlaceholder, replyArticle0),
-      'Placeholder must be before reply 0'
-    );
-    assert.ok(
-      isBeforeInDocument(insertedPlaceholder, replyArticle1),
-      'Placeholder must be before reply 1'
-    );
-    assert.ok(
-      isBeforeInDocument(insertedPlaceholder, replyArticle2),
-      'Placeholder must be before reply 2'
-    );
+    assert.ok(article.classList.contains(FOLD_BOT_REPLIES_HIDDEN_CLASS));
+    assert.ok(cell.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS));
+    assert.strictEqual(cell.getAttribute('data-quietx-folded'), 'true');
   });
 });

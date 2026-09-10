@@ -1,10 +1,13 @@
 // ---- Fold Bot Replies Feature (1.0.21 - Pro feature) ----
 // Local-only collapse of near-duplicate / template spam replies under any status.
 // SECURITY: ZERO clicks on Hide/Delete/Block/Mute - purely visual DOM collapse.
+// CRITICAL: ONE chip per page, parked INSIDE a reply cell (not naked sibling).
 
 const FOLD_BOT_REPLIES_STORAGE_KEY = 'foldBotReplies';
 const FOLD_BOT_REPLIES_HIDDEN_CLASS = 'quietx-folded-reply';
-const FOLD_BOT_REPLIES_PLACEHOLDER_CLASS = 'quietx-fold-placeholder';
+const FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS = 'quietx-folded-cell';
+const FOLD_BOT_REPLIES_HOST_CELL_CLASS = 'quietx-fold-host-cell';
+const FOLD_BOT_REPLIES_CHIP_CLASS = 'quietx-fold-chip';
 const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
 const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
 const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
@@ -12,7 +15,8 @@ const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
 
 let isFoldBotRepliesEnabled = false;
 let foldBotRepliesObserver = null;
-let foldBotRepliesProcessedConversations = new WeakSet();
+let foldBotRepliesExpanded = false;
+let foldBotRepliesCurrentPageId = null;
 
 /**
  * Normalize text for similarity comparison.
@@ -101,10 +105,83 @@ function areTextsSimilar(text1, text2, threshold = FOLD_BOT_REPLIES_SIMILARITY_T
 }
 
 /**
- * Cluster reply articles by text similarity.
- * Returns array of clusters, each cluster is an array of article elements.
+ * Check if we are on a status/conversation page. Returns status ID or null.
  */
-function clusterRepliesBySimilarity(replyArticles) {
+function getStatusPageId() {
+  const match = window.location.pathname.match(/\/status\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Check if we are on a status/conversation page.
+ */
+function isOnStatusPage() {
+  return getStatusPageId() !== null;
+}
+
+/**
+ * Get the primary/root status article (the main post, not replies).
+ */
+function getPrimaryStatusArticle() {
+  const statusId = getStatusPageId();
+  if (!statusId) return null;
+  
+  const allArticles = document.querySelectorAll('article[data-testid="tweet"]');
+  
+  for (const article of allArticles) {
+    const statusLink = article.querySelector(`a[href*="/status/${statusId}"]`);
+    if (statusLink) {
+      return article;
+    }
+  }
+  
+  return allArticles[0] || null;
+}
+
+/**
+ * Get the primary article's cellInnerDiv.
+ */
+function getPrimaryCellDiv() {
+  const primaryArticle = getPrimaryStatusArticle();
+  if (!primaryArticle) return null;
+  return primaryArticle.closest('[data-testid="cellInnerDiv"]');
+}
+
+/**
+ * Check if element A comes before element B in document order.
+ */
+function isBeforeInDocument(a, b) {
+  if (!a || !b) return false;
+  const position = a.compareDocumentPosition(b);
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
+ * Get all reply articles (excluding primary) that are AFTER primary in DOM.
+ */
+function getValidReplyArticles() {
+  const primaryArticle = getPrimaryStatusArticle();
+  const primaryCellDiv = getPrimaryCellDiv();
+  const allArticles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+  
+  return allArticles.filter(article => {
+    if (primaryArticle && article === primaryArticle) return false;
+    if (primaryCellDiv && primaryCellDiv.contains(article)) return false;
+    if (primaryArticle && !isBeforeInDocument(primaryArticle, article)) return false;
+    
+    const cellDiv = article.closest('[data-testid="cellInnerDiv"]');
+    if (!cellDiv) return false;
+    if (primaryCellDiv && cellDiv === primaryCellDiv) return false;
+    
+    return true;
+  });
+}
+
+/**
+ * Cluster reply articles by text similarity.
+ * Returns flat array of all articles that belong to any cluster (size>=2).
+ */
+function findAllDuplicateReplies(replyArticles) {
   if (!replyArticles || replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
     return [];
   }
@@ -123,92 +200,43 @@ function clusterRepliesBySimilarity(replyArticles) {
     return [];
   }
   
-  const clusters = [];
-  const assigned = new Set();
+  const duplicateIndices = new Set();
   
   for (let i = 0; i < articlesWithText.length; i++) {
-    if (assigned.has(i)) continue;
-    
-    const cluster = [articlesWithText[i]];
-    assigned.add(i);
-    
     for (let j = i + 1; j < articlesWithText.length; j++) {
-      if (assigned.has(j)) continue;
-      
-      const isSimilar = cluster.some(item => 
-        areTextsSimilar(item.text, articlesWithText[j].text)
-      );
-      
-      if (isSimilar) {
-        cluster.push(articlesWithText[j]);
-        assigned.add(j);
-      }
-    }
-    
-    if (cluster.length >= FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) {
-      clusters.push(cluster);
-    }
-  }
-  
-  return clusters;
-}
-
-/**
- * Check if we are on a status/conversation page.
- */
-function isOnStatusPage() {
-  return /\/status\/\d+/.test(window.location.pathname);
-}
-
-/**
- * Get the primary/root status article (the main post, not replies).
- */
-function getPrimaryStatusArticle() {
-  const statusMatch = window.location.pathname.match(/\/status\/(\d+)/);
-  if (!statusMatch) return null;
-  
-  const statusId = statusMatch[1];
-  const allArticles = document.querySelectorAll('article[data-testid="tweet"]');
-  
-  for (const article of allArticles) {
-    const statusLink = article.querySelector(`a[href*="/status/${statusId}"]`);
-    if (statusLink) {
-      const rect = article.getBoundingClientRect();
-      if (rect.top < window.innerHeight / 2) {
-        return article;
+      if (areTextsSimilar(articlesWithText[i].text, articlesWithText[j].text)) {
+        duplicateIndices.add(i);
+        duplicateIndices.add(j);
       }
     }
   }
   
-  return allArticles[0] || null;
-}
-
-/**
- * Get reply articles (excluding the primary status).
- */
-function getReplyArticles() {
-  const primaryArticle = getPrimaryStatusArticle();
-  const allArticles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
-  
-  if (!primaryArticle) {
-    return allArticles.slice(1);
+  const duplicates = [];
+  for (const idx of duplicateIndices) {
+    duplicates.push(articlesWithText[idx]);
   }
   
-  return allArticles.filter(article => article !== primaryArticle);
+  duplicates.sort((a, b) => {
+    if (isBeforeInDocument(a.article, b.article)) return -1;
+    if (isBeforeInDocument(b.article, a.article)) return 1;
+    return 0;
+  });
+  
+  return duplicates;
 }
 
 /**
- * Create the fold placeholder element.
+ * Create the fold chip element (goes INSIDE a cellInnerDiv).
  */
-function createFoldPlaceholder(count, cluster) {
-  const placeholder = document.createElement('div');
-  placeholder.className = FOLD_BOT_REPLIES_PLACEHOLDER_CLASS;
-  placeholder.setAttribute('data-fold-count', count);
-  placeholder.setAttribute('aria-expanded', 'false');
-  placeholder.setAttribute('role', 'button');
-  placeholder.setAttribute('tabindex', '0');
+function createFoldChip(count) {
+  const chip = document.createElement('div');
+  chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+  chip.setAttribute('data-fold-count', String(count));
+  chip.setAttribute('aria-expanded', 'false');
+  chip.setAttribute('role', 'button');
+  chip.setAttribute('tabindex', '0');
   
-  placeholder.innerHTML = `
+  chip.innerHTML = `
     <div class="quietx-fold-inner">
       <svg class="quietx-fold-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
@@ -219,150 +247,60 @@ function createFoldPlaceholder(count, cluster) {
     </div>
   `;
   
-  const handleExpand = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleFoldExpansion(placeholder, cluster);
-  };
-  
-  placeholder.addEventListener('click', handleExpand);
-  placeholder.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      handleExpand(e);
-    }
-  });
-  
-  return placeholder;
+  return chip;
 }
 
 /**
- * Toggle expansion state of a folded cluster.
+ * Handle fold chip click via event delegation.
  */
-function toggleFoldExpansion(placeholder, cluster) {
-  const isExpanded = placeholder.getAttribute('aria-expanded') === 'true';
+function handleFoldChipClick(e) {
+  const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
   
-  if (isExpanded) {
-    placeholder.setAttribute('aria-expanded', 'false');
-    placeholder.classList.remove(FOLD_BOT_REPLIES_EXPANDED_CLASS);
-    const count = cluster.length;
-    placeholder.querySelector('.quietx-fold-text').textContent = `Folded ${count} similar replies`;
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const isExpanded = foldBotRepliesExpanded;
+  foldBotRepliesExpanded = !isExpanded;
+  
+  applyFoldState();
+}
+
+/**
+ * Apply the current fold state (collapsed or expanded).
+ */
+function applyFoldState() {
+  const chip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
+  
+  const count = chip.getAttribute('data-fold-count') || '0';
+  const textEl = chip.querySelector('.quietx-fold-text');
+  
+  if (foldBotRepliesExpanded) {
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    if (textEl) textEl.textContent = `Hide ${count} similar replies`;
     
-    for (const item of cluster) {
-      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
-    }
+    document.querySelectorAll('.' + FOLD_BOT_REPLIES_HIDDEN_CLASS).forEach(el => {
+      el.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    });
+    document.querySelectorAll('.' + FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS).forEach(el => {
+      el.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    });
   } else {
-    placeholder.setAttribute('aria-expanded', 'true');
-    placeholder.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
-    placeholder.querySelector('.quietx-fold-text').textContent = `Hide ${cluster.length} similar replies`;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.classList.remove(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    if (textEl) textEl.textContent = `Folded ${count} similar replies`;
     
-    for (const item of cluster) {
-      item.article.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
-    }
-  }
-}
-
-/**
- * Check if element A comes before element B in document order.
- */
-function isBeforeInDocument(a, b) {
-  if (!a || !b) return false;
-  const position = a.compareDocumentPosition(b);
-  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-}
-
-/**
- * Check if an article is the primary/root status article.
- */
-function isPrimaryArticle(article) {
-  const primaryArticle = getPrimaryStatusArticle();
-  if (!primaryArticle) return false;
-  return article === primaryArticle || primaryArticle.contains(article);
-}
-
-/**
- * Get the cellInnerDiv for the primary article.
- */
-function getPrimaryCellDiv() {
-  const primaryArticle = getPrimaryStatusArticle();
-  if (!primaryArticle) return null;
-  return primaryArticle.closest('[data-testid="cellInnerDiv"]');
-}
-
-/**
- * Apply fold to a cluster of similar replies.
- * CRITICAL: Never fold or place chip on/inside the primary/root status article.
- */
-function applyFoldToCluster(cluster) {
-  if (!cluster || cluster.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
-  
-  const primaryArticle = getPrimaryStatusArticle();
-  const primaryCellDiv = primaryArticle ? primaryArticle.closest('[data-testid="cellInnerDiv"]') : null;
-  
-  const validClusterItems = cluster.filter(item => {
-    if (!item.article) return false;
-    if (primaryArticle && item.article === primaryArticle) return false;
-    if (primaryArticle && primaryArticle.contains(item.article)) return false;
-    if (primaryCellDiv && primaryCellDiv.contains(item.article)) return false;
-    return true;
-  });
-  
-  if (validClusterItems.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
-  
-  const itemsWithCells = validClusterItems
-    .map(item => ({
-      ...item,
-      cellDiv: item.article.closest('[data-testid="cellInnerDiv"]')
-    }))
-    .filter(item => item.cellDiv !== null);
-  
-  if (itemsWithCells.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
-  
-  itemsWithCells.sort((a, b) => {
-    if (isBeforeInDocument(a.article, b.article)) return -1;
-    if (isBeforeInDocument(b.article, a.article)) return 1;
-    return 0;
-  });
-  
-  const itemsAfterPrimary = primaryArticle
-    ? itemsWithCells.filter(item => isBeforeInDocument(primaryArticle, item.article))
-    : itemsWithCells;
-  
-  if (itemsAfterPrimary.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
-  
-  const topmost = itemsAfterPrimary[0];
-  const targetCellDiv = topmost.cellDiv;
-  
-  if (primaryCellDiv && (targetCellDiv === primaryCellDiv || primaryCellDiv.contains(targetCellDiv))) {
-    return;
-  }
-  
-  const existingPlaceholder = targetCellDiv.previousElementSibling;
-  if (existingPlaceholder && existingPlaceholder.classList.contains(FOLD_BOT_REPLIES_PLACEHOLDER_CLASS)) {
-    return;
-  }
-  
-  for (const item of itemsAfterPrimary) {
-    item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
-  }
-  
-  const placeholder = createFoldPlaceholder(itemsAfterPrimary.length, itemsAfterPrimary);
-  
-  const timelineParent = targetCellDiv.parentElement;
-  if (!timelineParent) return;
-  
-  if (primaryCellDiv && timelineParent.contains(primaryCellDiv)) {
-    if (isBeforeInDocument(primaryCellDiv, targetCellDiv)) {
-      timelineParent.insertBefore(placeholder, targetCellDiv);
-    } else {
-      const nextSibling = primaryCellDiv.nextElementSibling;
-      if (nextSibling) {
-        timelineParent.insertBefore(placeholder, nextSibling);
-      } else {
-        timelineParent.appendChild(placeholder);
+    document.querySelectorAll('[data-quietx-folded="true"]').forEach(el => {
+      const article = el.querySelector('article[data-testid="tweet"]');
+      if (article) {
+        article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
       }
-    }
-  } else {
-    timelineParent.insertBefore(placeholder, targetCellDiv);
+      if (!el.classList.contains(FOLD_BOT_REPLIES_HOST_CELL_CLASS)) {
+        el.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+      }
+    });
   }
 }
 
@@ -374,26 +312,89 @@ function removeFoldUI() {
     el.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
   });
   
-  document.querySelectorAll('.' + FOLD_BOT_REPLIES_PLACEHOLDER_CLASS).forEach(el => {
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_HOST_CELL_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+  });
+  
+  document.querySelectorAll('[data-quietx-folded]').forEach(el => {
+    el.removeAttribute('data-quietx-folded');
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_CHIP_CLASS).forEach(el => {
     el.remove();
   });
+  
+  foldBotRepliesExpanded = false;
 }
 
 /**
  * Process the current conversation for folding.
+ * ONE chip per page, parked INSIDE topmost folded reply's cellInnerDiv.
  */
 function processFoldBotReplies() {
   if (!isFoldBotRepliesEnabled) return;
   if (!isOnStatusPage()) return;
   
-  const replyArticles = getReplyArticles();
+  const currentPageId = getStatusPageId();
+  if (currentPageId !== foldBotRepliesCurrentPageId) {
+    foldBotRepliesExpanded = false;
+    foldBotRepliesCurrentPageId = currentPageId;
+  }
+  
+  if (foldBotRepliesExpanded) {
+    applyFoldState();
+    return;
+  }
+  
+  const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (existingChip) {
+    return;
+  }
+  
+  const replyArticles = getValidReplyArticles();
   if (replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) return;
   
-  const clusters = clusterRepliesBySimilarity(replyArticles);
+  const duplicates = findAllDuplicateReplies(replyArticles);
+  if (duplicates.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
   
-  for (const cluster of clusters) {
-    applyFoldToCluster(cluster);
+  const primaryCellDiv = getPrimaryCellDiv();
+  
+  const validDuplicates = duplicates.filter(item => {
+    const cellDiv = item.article.closest('[data-testid="cellInnerDiv"]');
+    if (!cellDiv) return false;
+    if (primaryCellDiv && cellDiv === primaryCellDiv) return false;
+    if (primaryCellDiv && primaryCellDiv.contains(cellDiv)) return false;
+    return true;
+  });
+  
+  if (validDuplicates.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const topmostDuplicate = validDuplicates[0];
+  const hostCellDiv = topmostDuplicate.article.closest('[data-testid="cellInnerDiv"]');
+  
+  if (!hostCellDiv) return;
+  if (primaryCellDiv && hostCellDiv === primaryCellDiv) return;
+  
+  for (const item of validDuplicates) {
+    const cellDiv = item.article.closest('[data-testid="cellInnerDiv"]');
+    if (cellDiv) {
+      cellDiv.setAttribute('data-quietx-folded', 'true');
+      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+      
+      if (cellDiv !== hostCellDiv) {
+        cellDiv.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+      }
+    }
   }
+  
+  hostCellDiv.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+  
+  const chip = createFoldChip(validDuplicates.length);
+  hostCellDiv.insertBefore(chip, hostCellDiv.firstChild);
 }
 
 /**
@@ -401,6 +402,16 @@ function processFoldBotReplies() {
  */
 function setupFoldBotRepliesObserver() {
   if (foldBotRepliesObserver) return;
+  
+  document.addEventListener('click', handleFoldChipClick, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+      if (chip) {
+        handleFoldChipClick(e);
+      }
+    }
+  }, true);
   
   let debounceTimer = null;
   
@@ -473,10 +484,14 @@ if (typeof module !== 'undefined' && module.exports) {
     levenshteinDistance,
     similarityRatio,
     areTextsSimilar,
-    clusterRepliesBySimilarity,
+    findAllDuplicateReplies,
     FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD,
     FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE,
-    FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN
+    FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN,
+    FOLD_BOT_REPLIES_CHIP_CLASS,
+    FOLD_BOT_REPLIES_HOST_CELL_CLASS,
+    FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS,
+    FOLD_BOT_REPLIES_HIDDEN_CLASS
   };
 }
 
