@@ -1,3 +1,409 @@
+// ---- Fold Bot Replies Feature (1.0.21 - Pro feature) ----
+// Local-only collapse of near-duplicate / template spam replies under any status.
+// SECURITY: ZERO clicks on Hide/Delete/Block/Mute - purely visual DOM collapse.
+
+const FOLD_BOT_REPLIES_STORAGE_KEY = 'foldBotReplies';
+const FOLD_BOT_REPLIES_HIDDEN_CLASS = 'quietx-folded-reply';
+const FOLD_BOT_REPLIES_PLACEHOLDER_CLASS = 'quietx-fold-placeholder';
+const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
+const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
+const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
+const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
+
+let isFoldBotRepliesEnabled = false;
+let foldBotRepliesObserver = null;
+let foldBotRepliesProcessedConversations = new WeakSet();
+
+/**
+ * Normalize text for similarity comparison.
+ * Removes URLs, mentions, hashtags, emojis, extra whitespace, and lowercases.
+ */
+function normalizeTextForSimilarity(text) {
+  if (!text || typeof text !== 'string') return '';
+  let normalized = text
+    .toLowerCase()
+    .replace(/https?:\/\/[^\s]+/gi, '')
+    .replace(/@\w+/g, '')
+    .replace(/#\w+/g, '')
+    .replace(/[\u{1F600}-\u{1F6FF}]/gu, '')
+    .replace(/[\u{1F300}-\u{1F5FF}]/gu, '')
+    .replace(/[\u{1F680}-\u{1F6FF}]/gu, '')
+    .replace(/[\u{2600}-\u{26FF}]/gu, '')
+    .replace(/[\u{2700}-\u{27BF}]/gu, '')
+    .replace(/[\u{1F900}-\u{1F9FF}]/gu, '')
+    .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized;
+}
+
+/**
+ * Compute Levenshtein distance between two strings.
+ */
+function levenshteinDistance(a, b) {
+  if (!a || !b) return Math.max((a || '').length, (b || '').length);
+  if (a === b) return 0;
+  
+  const m = a.length;
+  const n = b.length;
+  
+  if (m === 0) return n;
+  if (n === 0) return m;
+  
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array(n + 1);
+  
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  
+  return prev[n];
+}
+
+/**
+ * Compute similarity ratio between two strings (0 to 1).
+ * Uses Levenshtein distance normalized by max length.
+ */
+function similarityRatio(a, b) {
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  
+  const distance = levenshteinDistance(a, b);
+  return 1 - (distance / maxLen);
+}
+
+/**
+ * Check if two texts are similar enough to be considered duplicates.
+ */
+function areTextsSimilar(text1, text2, threshold = FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD) {
+  const norm1 = normalizeTextForSimilarity(text1);
+  const norm2 = normalizeTextForSimilarity(text2);
+  
+  if (norm1.length < 3 || norm2.length < 3) return false;
+  
+  if (norm1 === norm2) return true;
+  
+  return similarityRatio(norm1, norm2) >= threshold;
+}
+
+/**
+ * Cluster reply articles by text similarity.
+ * Returns array of clusters, each cluster is an array of article elements.
+ */
+function clusterRepliesBySimilarity(replyArticles) {
+  if (!replyArticles || replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
+    return [];
+  }
+  
+  const articlesWithText = [];
+  for (const article of replyArticles) {
+    const tweetText = article.querySelector('[data-testid="tweetText"]');
+    const text = tweetText ? (tweetText.textContent || '').trim() : '';
+    const normalizedText = normalizeTextForSimilarity(text);
+    if (normalizedText.length >= 3) {
+      articlesWithText.push({ article, text, normalizedText });
+    }
+  }
+  
+  if (articlesWithText.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
+    return [];
+  }
+  
+  const clusters = [];
+  const assigned = new Set();
+  
+  for (let i = 0; i < articlesWithText.length; i++) {
+    if (assigned.has(i)) continue;
+    
+    const cluster = [articlesWithText[i]];
+    assigned.add(i);
+    
+    for (let j = i + 1; j < articlesWithText.length; j++) {
+      if (assigned.has(j)) continue;
+      
+      const isSimilar = cluster.some(item => 
+        areTextsSimilar(item.text, articlesWithText[j].text)
+      );
+      
+      if (isSimilar) {
+        cluster.push(articlesWithText[j]);
+        assigned.add(j);
+      }
+    }
+    
+    if (cluster.length >= FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) {
+      clusters.push(cluster);
+    }
+  }
+  
+  return clusters;
+}
+
+/**
+ * Check if we are on a status/conversation page.
+ */
+function isOnStatusPage() {
+  return /\/status\/\d+/.test(window.location.pathname);
+}
+
+/**
+ * Get the primary/root status article (the main post, not replies).
+ */
+function getPrimaryStatusArticle() {
+  const statusMatch = window.location.pathname.match(/\/status\/(\d+)/);
+  if (!statusMatch) return null;
+  
+  const statusId = statusMatch[1];
+  const allArticles = document.querySelectorAll('article[data-testid="tweet"]');
+  
+  for (const article of allArticles) {
+    const statusLink = article.querySelector(`a[href*="/status/${statusId}"]`);
+    if (statusLink) {
+      const rect = article.getBoundingClientRect();
+      if (rect.top < window.innerHeight / 2) {
+        return article;
+      }
+    }
+  }
+  
+  return allArticles[0] || null;
+}
+
+/**
+ * Get reply articles (excluding the primary status).
+ */
+function getReplyArticles() {
+  const primaryArticle = getPrimaryStatusArticle();
+  const allArticles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+  
+  if (!primaryArticle) {
+    return allArticles.slice(1);
+  }
+  
+  return allArticles.filter(article => article !== primaryArticle);
+}
+
+/**
+ * Create the fold placeholder element.
+ */
+function createFoldPlaceholder(count, cluster) {
+  const placeholder = document.createElement('div');
+  placeholder.className = FOLD_BOT_REPLIES_PLACEHOLDER_CLASS;
+  placeholder.setAttribute('data-fold-count', count);
+  placeholder.setAttribute('aria-expanded', 'false');
+  placeholder.setAttribute('role', 'button');
+  placeholder.setAttribute('tabindex', '0');
+  
+  placeholder.innerHTML = `
+    <div class="quietx-fold-inner">
+      <svg class="quietx-fold-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+        <path d="M12 8v8M8 12h8" class="quietx-fold-plus"/>
+      </svg>
+      <span class="quietx-fold-text">Folded ${count} similar replies</span>
+      <span class="quietx-fold-hint">(only you stop seeing them)</span>
+    </div>
+  `;
+  
+  const handleExpand = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFoldExpansion(placeholder, cluster);
+  };
+  
+  placeholder.addEventListener('click', handleExpand);
+  placeholder.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      handleExpand(e);
+    }
+  });
+  
+  return placeholder;
+}
+
+/**
+ * Toggle expansion state of a folded cluster.
+ */
+function toggleFoldExpansion(placeholder, cluster) {
+  const isExpanded = placeholder.getAttribute('aria-expanded') === 'true';
+  
+  if (isExpanded) {
+    placeholder.setAttribute('aria-expanded', 'false');
+    placeholder.classList.remove(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    const count = cluster.length;
+    placeholder.querySelector('.quietx-fold-text').textContent = `Folded ${count} similar replies`;
+    
+    for (const item of cluster) {
+      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    }
+  } else {
+    placeholder.setAttribute('aria-expanded', 'true');
+    placeholder.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    placeholder.querySelector('.quietx-fold-text').textContent = `Hide ${cluster.length} similar replies`;
+    
+    for (const item of cluster) {
+      item.article.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    }
+  }
+}
+
+/**
+ * Apply fold to a cluster of similar replies.
+ */
+function applyFoldToCluster(cluster) {
+  if (!cluster || cluster.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const firstArticle = cluster[0].article;
+  const cellDiv = firstArticle.closest('[data-testid="cellInnerDiv"]');
+  
+  if (!cellDiv) {
+    for (const item of cluster) {
+      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    }
+    return;
+  }
+  
+  const existingPlaceholder = cellDiv.previousElementSibling;
+  if (existingPlaceholder && existingPlaceholder.classList.contains(FOLD_BOT_REPLIES_PLACEHOLDER_CLASS)) {
+    return;
+  }
+  
+  for (const item of cluster) {
+    item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+  }
+  
+  const placeholder = createFoldPlaceholder(cluster.length, cluster);
+  cellDiv.parentElement.insertBefore(placeholder, cellDiv);
+}
+
+/**
+ * Remove all fold UI and restore hidden replies.
+ */
+function removeFoldUI() {
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_PLACEHOLDER_CLASS).forEach(el => {
+    el.remove();
+  });
+}
+
+/**
+ * Process the current conversation for folding.
+ */
+function processFoldBotReplies() {
+  if (!isFoldBotRepliesEnabled) return;
+  if (!isOnStatusPage()) return;
+  
+  const replyArticles = getReplyArticles();
+  if (replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) return;
+  
+  const clusters = clusterRepliesBySimilarity(replyArticles);
+  
+  for (const cluster of clusters) {
+    applyFoldToCluster(cluster);
+  }
+}
+
+/**
+ * Setup the fold bot replies observer.
+ */
+function setupFoldBotRepliesObserver() {
+  if (foldBotRepliesObserver) return;
+  
+  let debounceTimer = null;
+  
+  foldBotRepliesObserver = new MutationObserver(() => {
+    if (!isFoldBotRepliesEnabled) return;
+    
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      processFoldBotReplies();
+    }, 500);
+  });
+  
+  foldBotRepliesObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+/**
+ * Teardown the fold bot replies observer.
+ */
+function teardownFoldBotRepliesObserver() {
+  if (foldBotRepliesObserver) {
+    foldBotRepliesObserver.disconnect();
+    foldBotRepliesObserver = null;
+  }
+}
+
+/**
+ * Initialize the fold bot replies feature.
+ */
+function initFoldBotReplies() {
+  chrome.storage.local.get(['isPro', FOLD_BOT_REPLIES_STORAGE_KEY], (result) => {
+    const isPro = !!result.isPro;
+    const isEnabled = isPro && result[FOLD_BOT_REPLIES_STORAGE_KEY] === true;
+    
+    isFoldBotRepliesEnabled = isEnabled;
+    
+    if (isEnabled) {
+      console.log('Better X: Fold Bot Replies Enabled 🤖');
+      processFoldBotReplies();
+      setupFoldBotRepliesObserver();
+    }
+  });
+  
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    
+    if (changes[FOLD_BOT_REPLIES_STORAGE_KEY] || changes.isPro) {
+      chrome.storage.local.get(['isPro', FOLD_BOT_REPLIES_STORAGE_KEY], (result) => {
+        const isPro = !!result.isPro;
+        const wasEnabled = isFoldBotRepliesEnabled;
+        isFoldBotRepliesEnabled = isPro && result[FOLD_BOT_REPLIES_STORAGE_KEY] === true;
+        
+        console.log('Better X: Fold Bot Replies switched to:', isFoldBotRepliesEnabled);
+        
+        if (isFoldBotRepliesEnabled && !wasEnabled) {
+          processFoldBotReplies();
+          setupFoldBotRepliesObserver();
+        } else if (!isFoldBotRepliesEnabled && wasEnabled) {
+          removeFoldUI();
+          teardownFoldBotRepliesObserver();
+        }
+      });
+    }
+  });
+}
+
+// Export for testing
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeTextForSimilarity,
+    levenshteinDistance,
+    similarityRatio,
+    areTextsSimilar,
+    clusterRepliesBySimilarity,
+    FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD,
+    FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE,
+    FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN
+  };
+}
+
 // Create and inject the recycle bin
 function createRecycleBin() {
   const bin = document.createElement("div");
@@ -1579,6 +1985,7 @@ function init() {
       initTweetHistory();
       createRecycleBin();
       initializePosts();
+      initFoldBotReplies();
 
       // Load Ad Blocking preference
       chrome.storage.local.get(['blockAds'], (r) => {

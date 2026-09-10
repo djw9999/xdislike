@@ -36,7 +36,7 @@ async function validateLicenseKey(key) {
 }
 
 function restoreState() {
-  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon'], (result) => {
+  chrome.storage.local.get(['licenseKey', 'isPro', 'mergeCommunityTabs', 'blockAds', 'hideTweetGrokIcon', 'foldBotReplies'], (result) => {
     const hasStoredGrant = result.licenseKey && result.isPro;
 
     if (hasStoredGrant) {
@@ -74,6 +74,16 @@ function restoreState() {
         hideTweetGrokIconEl.disabled = true;
       }
     }
+
+    const foldBotRepliesEl = document.getElementById('fold-bot-replies');
+    if (foldBotRepliesEl) {
+      if (hasStoredGrant) {
+        foldBotRepliesEl.checked = result.foldBotReplies === true;
+      } else {
+        foldBotRepliesEl.checked = false;
+        foldBotRepliesEl.disabled = true;
+      }
+    }
   });
 }
 
@@ -83,6 +93,7 @@ function updateUI(isPro) {
   const status = document.getElementById('ready-status');
   const proToggleCards = document.querySelectorAll('.toggle-card.pro-feature');
   const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+  const foldBotRepliesEl = document.getElementById('fold-bot-replies');
 
   if (isPro) {
     if (form) form.style.display = 'none';
@@ -98,6 +109,9 @@ function updateUI(isPro) {
     });
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = false;
+    }
+    if (foldBotRepliesEl) {
+      foldBotRepliesEl.disabled = false;
     }
   } else {
     if (form) form.style.display = 'grid';
@@ -117,6 +131,10 @@ function updateUI(isPro) {
     if (hideTweetGrokIconEl) {
       hideTweetGrokIconEl.disabled = true;
       hideTweetGrokIconEl.checked = false;
+    }
+    if (foldBotRepliesEl) {
+      foldBotRepliesEl.disabled = true;
+      foldBotRepliesEl.checked = false;
     }
   }
 }
@@ -202,6 +220,7 @@ function wireSettings() {
   const mergeEl = document.getElementById('merge-community-tabs');
   const blockAdsEl = document.getElementById('block-ads');
   const hideTweetGrokIconEl = document.getElementById('hide-tweet-grok-icon');
+  const foldBotRepliesEl = document.getElementById('fold-bot-replies');
 
   if (mergeEl) {
     mergeEl.addEventListener('change', async () => {
@@ -225,6 +244,19 @@ function wireSettings() {
         return;
       }
       await chrome.storage.local.set({ hideTweetGrokIcon: !!hideTweetGrokIconEl.checked });
+    });
+  }
+
+  if (foldBotRepliesEl) {
+    foldBotRepliesEl.addEventListener('change', async () => {
+      const isPro = await new Promise(resolve => {
+        chrome.storage.local.get(['isPro'], r => resolve(!!r.isPro));
+      });
+      if (!isPro) {
+        foldBotRepliesEl.checked = false;
+        return;
+      }
+      await chrome.storage.local.set({ foldBotReplies: !!foldBotRepliesEl.checked });
     });
   }
 }

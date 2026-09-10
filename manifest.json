@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Better X/Twitter",
-  "version": "1.0.18",
+  "version": "1.0.21",
   "description": "Hide promoted posts locally and clean up desktop X in fewer clicks",
   "permissions": [
     "storage"
