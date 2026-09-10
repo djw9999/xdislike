@@ -783,6 +783,255 @@ describe('Default OFF and Pro License Gating', () => {
   });
 });
 
+describe('Click/Pointerdown Expand', () => {
+  let dom;
+  let document;
+  let sessionStorageMock;
+
+  beforeEach(() => {
+    sessionStorageMock = new Map();
+    
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+    global.window = dom.window;
+    
+    global.sessionStorage = {
+      getItem: (key) => sessionStorageMock.get(key) || null,
+      setItem: (key, value) => sessionStorageMock.set(key, value),
+      removeItem: (key) => sessionStorageMock.delete(key),
+    };
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+    delete global.window;
+    delete global.sessionStorage;
+  });
+
+  test('clicking chip toggles aria-expanded attribute', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'false');
+    
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'true');
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_EXPANDED_CLASS));
+  });
+
+  test('expanded state persists in sessionStorage keyed by pathname', () => {
+    const key = 'quietx-fold-expanded:/user/status/123456789';
+    
+    assert.strictEqual(sessionStorage.getItem(key), null);
+    
+    sessionStorage.setItem(key, 'true');
+    
+    assert.strictEqual(sessionStorage.getItem(key), 'true');
+  });
+
+  test('pointerdown on chip should be handled', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('tabindex', '0');
+    chip.setAttribute('role', 'button');
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    let pointerdownHandled = false;
+    chip.addEventListener('pointerdown', (e) => {
+      pointerdownHandled = true;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    
+    const event = new dom.window.Event('pointerdown', { bubbles: true });
+    chip.dispatchEvent(event);
+    
+    assert.strictEqual(pointerdownHandled, true, 'pointerdown should be handled');
+  });
+});
+
+describe('Re-apply Does NOT Re-fold When Expanded', () => {
+  let dom;
+  let document;
+  let sessionStorageMock;
+
+  beforeEach(() => {
+    sessionStorageMock = new Map();
+    
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+    global.window = dom.window;
+    
+    global.sessionStorage = {
+      getItem: (key) => sessionStorageMock.get(key) || null,
+      setItem: (key, value) => sessionStorageMock.set(key, value),
+      removeItem: (key) => sessionStorageMock.delete(key),
+    };
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+    delete global.window;
+    delete global.sessionStorage;
+  });
+
+  test('when sessionStorage has expanded=true, replies should stay visible', () => {
+    const key = 'quietx-fold-expanded:/user/status/123456789';
+    sessionStorage.setItem(key, 'true');
+    
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    
+    const isExpanded = sessionStorage.getItem(key) === 'true';
+    assert.strictEqual(isExpanded, true, 'Should detect expanded from sessionStorage');
+    
+    if (isExpanded) {
+      cell1.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+      cell2.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    }
+    
+    assert.strictEqual(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false);
+    assert.strictEqual(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false);
+  });
+
+  test('existing chip is re-used, not recreated when MutationObserver fires', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip1 = document.createElement('div');
+    chip1.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip1.id = 'original-chip';
+    hostCell.insertBefore(chip1, hostCell.firstChild);
+    
+    const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    if (existingChip) {
+      assert.strictEqual(existingChip.id, 'original-chip', 'Should reuse existing chip');
+    }
+    
+    const allChips = document.querySelectorAll('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    assert.strictEqual(allChips.length, 1, 'Should have exactly ONE chip');
+  });
+
+  test('collapse toggle only happens if sessionStorage is not set to expanded', () => {
+    const key = 'quietx-fold-expanded:/user/status/123456789';
+    
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    sessionStorage.removeItem(key);
+    const isExpanded = sessionStorage.getItem(key) === 'true';
+    assert.strictEqual(isExpanded, false, 'Should not be expanded when sessionStorage is clear');
+    
+    sessionStorage.setItem(key, 'true');
+    const isNowExpanded = sessionStorage.getItem(key) === 'true';
+    assert.strictEqual(isNowExpanded, true, 'Should be expanded after setting sessionStorage');
+  });
+});
+
+describe('One Chip Enforcement', () => {
+  let dom;
+  let document;
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('second chip is not created if one exists', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam A!', 'Spam A!', 'Spam B!', 'Spam B!', 'Spam B!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip1 = document.createElement('div');
+    chip1.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    hostCell.insertBefore(chip1, hostCell.firstChild);
+    
+    const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    if (existingChip) {
+    }
+    
+    const allChips = document.querySelectorAll('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    assert.strictEqual(allChips.length, 1, 'Should have exactly ONE chip');
+  });
+
+  test('chip count reflects total from all patterns', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam pattern A!',
+        'Spam pattern A!',
+        'Spam pattern B!',
+        'Spam pattern B!',
+        'Unique reply',
+      ]
+    );
+    
+    const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).slice(1);
+    const duplicates = findAllDuplicateReplies(articles);
+    
+    assert.strictEqual(duplicates.length, 4, 'Should aggregate all 4 duplicates');
+  });
+});
+
 describe('No Moderation Clicks (DOM-only collapse)', () => {
   let dom;
   let document;

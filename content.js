@@ -12,11 +12,44 @@ const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
 const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
 const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
 const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
+const FOLD_BOT_REPLIES_SESSION_KEY_PREFIX = 'quietx-fold-expanded:';
 
 let isFoldBotRepliesEnabled = false;
 let foldBotRepliesObserver = null;
-let foldBotRepliesExpanded = false;
 let foldBotRepliesCurrentPageId = null;
+
+/**
+ * Get the sessionStorage key for the current status page.
+ */
+function getFoldExpandedSessionKey() {
+  return FOLD_BOT_REPLIES_SESSION_KEY_PREFIX + window.location.pathname;
+}
+
+/**
+ * Check if the fold is expanded for the current page (persisted in sessionStorage).
+ */
+function isFoldExpanded() {
+  try {
+    return sessionStorage.getItem(getFoldExpandedSessionKey()) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set the expanded state for the current page in sessionStorage.
+ */
+function setFoldExpanded(expanded) {
+  try {
+    if (expanded) {
+      sessionStorage.setItem(getFoldExpandedSessionKey(), 'true');
+    } else {
+      sessionStorage.removeItem(getFoldExpandedSessionKey());
+    }
+  } catch {
+    // sessionStorage may be unavailable
+  }
+}
 
 /**
  * Normalize text for similarity comparison.
@@ -251,7 +284,7 @@ function createFoldChip(count) {
 }
 
 /**
- * Handle fold chip click via event delegation.
+ * Handle fold chip click/pointerdown via event delegation.
  */
 function handleFoldChipClick(e) {
   const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
@@ -259,9 +292,10 @@ function handleFoldChipClick(e) {
   
   e.preventDefault();
   e.stopPropagation();
+  e.stopImmediatePropagation();
   
-  const isExpanded = foldBotRepliesExpanded;
-  foldBotRepliesExpanded = !isExpanded;
+  const wasExpanded = isFoldExpanded();
+  setFoldExpanded(!wasExpanded);
   
   applyFoldState();
 }
@@ -275,8 +309,9 @@ function applyFoldState() {
   
   const count = chip.getAttribute('data-fold-count') || '0';
   const textEl = chip.querySelector('.quietx-fold-text');
+  const expanded = isFoldExpanded();
   
-  if (foldBotRepliesExpanded) {
+  if (expanded) {
     chip.setAttribute('aria-expanded', 'true');
     chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
     if (textEl) textEl.textContent = `Hide ${count} similar replies`;
@@ -328,7 +363,7 @@ function removeFoldUI() {
     el.remove();
   });
   
-  foldBotRepliesExpanded = false;
+  setFoldExpanded(false);
 }
 
 /**
@@ -341,17 +376,18 @@ function processFoldBotReplies() {
   
   const currentPageId = getStatusPageId();
   if (currentPageId !== foldBotRepliesCurrentPageId) {
-    foldBotRepliesExpanded = false;
     foldBotRepliesCurrentPageId = currentPageId;
   }
   
-  if (foldBotRepliesExpanded) {
+  const expanded = isFoldExpanded();
+  
+  const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (existingChip) {
     applyFoldState();
     return;
   }
   
-  const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
-  if (existingChip) {
+  if (expanded) {
     return;
   }
   
@@ -404,6 +440,7 @@ function setupFoldBotRepliesObserver() {
   if (foldBotRepliesObserver) return;
   
   document.addEventListener('click', handleFoldChipClick, true);
+  document.addEventListener('pointerdown', handleFoldChipClick, true);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
