@@ -654,3 +654,302 @@ describe('Integration: Fold UI behavior', () => {
     assert.ok(placeholder.classList.contains('quietx-fold-expanded'));
   });
 });
+
+describe('Primary Article Protection', () => {
+  let dom;
+  let document;
+  let window;
+
+  const FOLD_HIDDEN_CLASS = 'quietx-folded-reply';
+  const FOLD_PLACEHOLDER_CLASS = 'quietx-fold-placeholder';
+
+  function createConversationHTML(primaryText, replyTexts) {
+    const primaryCell = `
+      <div data-testid="cellInnerDiv" id="primary-cell">
+        <article data-testid="tweet" id="primary-article">
+          <div data-testid="User-Name">@originalAuthor</div>
+          <a href="/user/status/123456789">2h</a>
+          <div data-testid="tweetText">${primaryText}</div>
+          <div role="group">
+            <button data-testid="reply">Reply</button>
+            <button data-testid="like">Like</button>
+          </div>
+        </article>
+      </div>
+    `;
+    
+    const replyCells = replyTexts.map((text, i) => `
+      <div data-testid="cellInnerDiv" id="reply-cell-${i}">
+        <article data-testid="tweet" id="reply-article-${i}">
+          <div data-testid="User-Name">@spammer${i}</div>
+          <a href="/spammer${i}/status/${999000 + i}">1m</a>
+          <div data-testid="tweetText">${text}</div>
+          <div role="group">
+            <button data-testid="reply">Reply</button>
+            <button data-testid="like">Like</button>
+          </div>
+        </article>
+      </div>
+    `).join('');
+    
+    return `
+      <div id="timeline">
+        ${primaryCell}
+        ${replyCells}
+      </div>
+    `;
+  }
+
+  function isBeforeInDocument(a, b) {
+    if (!a || !b) return false;
+    const position = a.compareDocumentPosition(b);
+    return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }
+
+  beforeEach(() => {
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    window = dom.window;
+    global.document = document;
+    global.window = window;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.window;
+    delete global.HTMLElement;
+    delete global.Node;
+  });
+
+  test('primary article never gets quietx-folded-reply hidden class', () => {
+    document.body.innerHTML = createConversationHTML(
+      'This is the original post',
+      [
+        'Spam reply 1!',
+        'Spam reply 1!',
+        'Spam reply 1!'
+      ]
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const replyArticles = [
+      document.getElementById('reply-article-0'),
+      document.getElementById('reply-article-1'),
+      document.getElementById('reply-article-2')
+    ];
+    
+    replyArticles.forEach(article => {
+      article.classList.add(FOLD_HIDDEN_CLASS);
+    });
+    
+    assert.strictEqual(
+      primaryArticle.classList.contains(FOLD_HIDDEN_CLASS), 
+      false, 
+      'Primary article must NEVER have the folded-reply hidden class'
+    );
+    
+    replyArticles.forEach((article, i) => {
+      assert.ok(
+        article.classList.contains(FOLD_HIDDEN_CLASS),
+        `Reply ${i} should have hidden class`
+      );
+    });
+  });
+
+  test('fold placeholder is not a descendant of primary article', () => {
+    document.body.innerHTML = createConversationHTML(
+      'This is the original post',
+      [
+        'Spam reply!',
+        'Spam reply!',
+        'Spam reply!'
+      ]
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const primaryCell = document.getElementById('primary-cell');
+    const timeline = document.getElementById('timeline');
+    const firstReplyCell = document.getElementById('reply-cell-0');
+    
+    const placeholder = document.createElement('div');
+    placeholder.className = FOLD_PLACEHOLDER_CLASS;
+    placeholder.id = 'test-placeholder';
+    placeholder.innerHTML = '<span>Folded 3 similar replies</span>';
+    
+    timeline.insertBefore(placeholder, firstReplyCell);
+    
+    const insertedPlaceholder = document.getElementById('test-placeholder');
+    
+    assert.strictEqual(
+      primaryArticle.contains(insertedPlaceholder),
+      false,
+      'Placeholder must NOT be inside primary article'
+    );
+    
+    assert.strictEqual(
+      primaryCell.contains(insertedPlaceholder),
+      false,
+      'Placeholder must NOT be inside primary cellInnerDiv'
+    );
+  });
+
+  test('fold placeholder is after primary article in document order', () => {
+    document.body.innerHTML = createConversationHTML(
+      'This is the original post',
+      [
+        'Spam reply!',
+        'Spam reply!',
+        'Spam reply!'
+      ]
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const timeline = document.getElementById('timeline');
+    const firstReplyCell = document.getElementById('reply-cell-0');
+    
+    const placeholder = document.createElement('div');
+    placeholder.className = FOLD_PLACEHOLDER_CLASS;
+    placeholder.id = 'test-placeholder';
+    
+    timeline.insertBefore(placeholder, firstReplyCell);
+    
+    const insertedPlaceholder = document.getElementById('test-placeholder');
+    
+    assert.ok(
+      isBeforeInDocument(primaryArticle, insertedPlaceholder),
+      'Placeholder must come AFTER primary article in document order'
+    );
+  });
+
+  test('primary cellInnerDiv never contains fold placeholder', () => {
+    document.body.innerHTML = createConversationHTML(
+      'This is the original post',
+      [
+        'Spam reply!',
+        'Spam reply!',
+        'Spam reply!'
+      ]
+    );
+    
+    const primaryCell = document.getElementById('primary-cell');
+    
+    const badPlaceholder = document.createElement('div');
+    badPlaceholder.className = FOLD_PLACEHOLDER_CLASS;
+    
+    assert.strictEqual(
+      primaryCell.querySelector('.' + FOLD_PLACEHOLDER_CLASS),
+      null,
+      'Primary cell should not contain any fold placeholder'
+    );
+  });
+
+  test('only reply articles are folded, not primary even if text matches', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Check out this amazing opportunity!',
+      [
+        'Check out this amazing opportunity!',
+        'Check out this amazing opportunity!',
+        'Check out this amazing opportunity!'
+      ]
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const replyArticles = [
+      document.getElementById('reply-article-0'),
+      document.getElementById('reply-article-1'),
+      document.getElementById('reply-article-2')
+    ];
+    
+    replyArticles.forEach(article => {
+      article.classList.add(FOLD_HIDDEN_CLASS);
+    });
+    
+    assert.strictEqual(
+      primaryArticle.classList.contains(FOLD_HIDDEN_CLASS),
+      false,
+      'Primary article must NOT be folded even if its text matches spam replies'
+    );
+  });
+
+  test('fold placeholder siblings are reply cells, not primary cell', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post content',
+      [
+        'Spam message!',
+        'Spam message!',
+        'Spam message!'
+      ]
+    );
+    
+    const timeline = document.getElementById('timeline');
+    const primaryCell = document.getElementById('primary-cell');
+    const firstReplyCell = document.getElementById('reply-cell-0');
+    
+    const placeholder = document.createElement('div');
+    placeholder.className = FOLD_PLACEHOLDER_CLASS;
+    placeholder.id = 'test-placeholder';
+    
+    timeline.insertBefore(placeholder, firstReplyCell);
+    
+    const insertedPlaceholder = document.getElementById('test-placeholder');
+    
+    assert.strictEqual(
+      insertedPlaceholder.previousElementSibling,
+      primaryCell,
+      'Placeholder previous sibling should be primary cell (placeholder is right after it)'
+    );
+    
+    assert.strictEqual(
+      insertedPlaceholder.nextElementSibling,
+      firstReplyCell,
+      'Placeholder next sibling should be first reply cell'
+    );
+  });
+
+  test('document order: primary -> placeholder -> folded replies', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      [
+        'Spam!',
+        'Spam!',
+        'Spam!'
+      ]
+    );
+    
+    const primaryArticle = document.getElementById('primary-article');
+    const timeline = document.getElementById('timeline');
+    const firstReplyCell = document.getElementById('reply-cell-0');
+    const replyArticle0 = document.getElementById('reply-article-0');
+    const replyArticle1 = document.getElementById('reply-article-1');
+    const replyArticle2 = document.getElementById('reply-article-2');
+    
+    const placeholder = document.createElement('div');
+    placeholder.className = FOLD_PLACEHOLDER_CLASS;
+    placeholder.id = 'test-placeholder';
+    timeline.insertBefore(placeholder, firstReplyCell);
+    
+    const insertedPlaceholder = document.getElementById('test-placeholder');
+    
+    assert.ok(
+      isBeforeInDocument(primaryArticle, insertedPlaceholder),
+      'Primary article must be before placeholder'
+    );
+    assert.ok(
+      isBeforeInDocument(insertedPlaceholder, replyArticle0),
+      'Placeholder must be before reply 0'
+    );
+    assert.ok(
+      isBeforeInDocument(insertedPlaceholder, replyArticle1),
+      'Placeholder must be before reply 1'
+    );
+    assert.ok(
+      isBeforeInDocument(insertedPlaceholder, replyArticle2),
+      'Placeholder must be before reply 2'
+    );
+  });
+});

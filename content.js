@@ -262,32 +262,108 @@ function toggleFoldExpansion(placeholder, cluster) {
 }
 
 /**
+ * Check if element A comes before element B in document order.
+ */
+function isBeforeInDocument(a, b) {
+  if (!a || !b) return false;
+  const position = a.compareDocumentPosition(b);
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
+ * Check if an article is the primary/root status article.
+ */
+function isPrimaryArticle(article) {
+  const primaryArticle = getPrimaryStatusArticle();
+  if (!primaryArticle) return false;
+  return article === primaryArticle || primaryArticle.contains(article);
+}
+
+/**
+ * Get the cellInnerDiv for the primary article.
+ */
+function getPrimaryCellDiv() {
+  const primaryArticle = getPrimaryStatusArticle();
+  if (!primaryArticle) return null;
+  return primaryArticle.closest('[data-testid="cellInnerDiv"]');
+}
+
+/**
  * Apply fold to a cluster of similar replies.
+ * CRITICAL: Never fold or place chip on/inside the primary/root status article.
  */
 function applyFoldToCluster(cluster) {
   if (!cluster || cluster.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
   
-  const firstArticle = cluster[0].article;
-  const cellDiv = firstArticle.closest('[data-testid="cellInnerDiv"]');
+  const primaryArticle = getPrimaryStatusArticle();
+  const primaryCellDiv = primaryArticle ? primaryArticle.closest('[data-testid="cellInnerDiv"]') : null;
   
-  if (!cellDiv) {
-    for (const item of cluster) {
-      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
-    }
+  const validClusterItems = cluster.filter(item => {
+    if (!item.article) return false;
+    if (primaryArticle && item.article === primaryArticle) return false;
+    if (primaryArticle && primaryArticle.contains(item.article)) return false;
+    if (primaryCellDiv && primaryCellDiv.contains(item.article)) return false;
+    return true;
+  });
+  
+  if (validClusterItems.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const itemsWithCells = validClusterItems
+    .map(item => ({
+      ...item,
+      cellDiv: item.article.closest('[data-testid="cellInnerDiv"]')
+    }))
+    .filter(item => item.cellDiv !== null);
+  
+  if (itemsWithCells.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  itemsWithCells.sort((a, b) => {
+    if (isBeforeInDocument(a.article, b.article)) return -1;
+    if (isBeforeInDocument(b.article, a.article)) return 1;
+    return 0;
+  });
+  
+  const itemsAfterPrimary = primaryArticle
+    ? itemsWithCells.filter(item => isBeforeInDocument(primaryArticle, item.article))
+    : itemsWithCells;
+  
+  if (itemsAfterPrimary.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const topmost = itemsAfterPrimary[0];
+  const targetCellDiv = topmost.cellDiv;
+  
+  if (primaryCellDiv && (targetCellDiv === primaryCellDiv || primaryCellDiv.contains(targetCellDiv))) {
     return;
   }
   
-  const existingPlaceholder = cellDiv.previousElementSibling;
+  const existingPlaceholder = targetCellDiv.previousElementSibling;
   if (existingPlaceholder && existingPlaceholder.classList.contains(FOLD_BOT_REPLIES_PLACEHOLDER_CLASS)) {
     return;
   }
   
-  for (const item of cluster) {
+  for (const item of itemsAfterPrimary) {
     item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
   }
   
-  const placeholder = createFoldPlaceholder(cluster.length, cluster);
-  cellDiv.parentElement.insertBefore(placeholder, cellDiv);
+  const placeholder = createFoldPlaceholder(itemsAfterPrimary.length, itemsAfterPrimary);
+  
+  const timelineParent = targetCellDiv.parentElement;
+  if (!timelineParent) return;
+  
+  if (primaryCellDiv && timelineParent.contains(primaryCellDiv)) {
+    if (isBeforeInDocument(primaryCellDiv, targetCellDiv)) {
+      timelineParent.insertBefore(placeholder, targetCellDiv);
+    } else {
+      const nextSibling = primaryCellDiv.nextElementSibling;
+      if (nextSibling) {
+        timelineParent.insertBefore(placeholder, nextSibling);
+      } else {
+        timelineParent.appendChild(placeholder);
+      }
+    }
+  } else {
+    timelineParent.insertBefore(placeholder, targetCellDiv);
+  }
 }
 
 /**
