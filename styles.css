@@ -1052,7 +1052,9 @@ input:checked+.slider:before {
 }
 
 .quietx-fold-chip:active {
-  transform: scale(0.99);
+  transform: scale(0.96);
+  background: rgba(29, 155, 240, 0.25);
+  transition: transform 60ms ease, background 60ms ease;
 }
 
 .quietx-fold-inner {
@@ -1110,6 +1112,12 @@ input:checked+.slider:before {
 
   .quietx-fold-chip:hover {
     background: rgba(29, 155, 240, 0.08);
+  }
+
+  .quietx-fold-chip:active {
+    transform: scale(0.96);
+    background: rgba(29, 155, 240, 0.18);
+    transition: transform 60ms ease, background 60ms ease;
   }
 
   .quietx-fold-inner {

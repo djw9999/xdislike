@@ -284,9 +284,22 @@ function createFoldChip(count) {
 }
 
 /**
- * Handle fold chip click/pointerdown via event delegation.
+ * Handle fold chip pointerdown: ONLY stop propagation, do NOT expand.
+ * This allows :active to paint before the chip is removed on pointerup/click.
  */
-function handleFoldChipClick(e) {
+function handleFoldChipPointerdown(e) {
+  const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
+  
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+}
+
+/**
+ * Handle fold chip click/pointerup: stop propagation AND expand.
+ */
+function handleFoldChipExpand(e) {
   const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
   if (!chip) return;
   
@@ -294,6 +307,13 @@ function handleFoldChipClick(e) {
   e.stopPropagation();
   e.stopImmediatePropagation();
   
+  expandFoldBotReplies(document);
+}
+
+/**
+ * Expand all folded bot replies (toggle fold state).
+ */
+function expandFoldBotReplies(root) {
   const wasExpanded = isFoldExpanded();
   setFoldExpanded(!wasExpanded);
   
@@ -439,13 +459,14 @@ function processFoldBotReplies() {
 function setupFoldBotRepliesObserver() {
   if (foldBotRepliesObserver) return;
   
-  document.addEventListener('click', handleFoldChipClick, true);
-  document.addEventListener('pointerdown', handleFoldChipClick, true);
+  document.addEventListener('pointerdown', handleFoldChipPointerdown, true);
+  document.addEventListener('pointerup', handleFoldChipExpand, true);
+  document.addEventListener('click', handleFoldChipExpand, true);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
       if (chip) {
-        handleFoldChipClick(e);
+        handleFoldChipExpand(e);
       }
     }
   }, true);
@@ -522,6 +543,9 @@ if (typeof module !== 'undefined' && module.exports) {
     similarityRatio,
     areTextsSimilar,
     findAllDuplicateReplies,
+    handleFoldChipPointerdown,
+    handleFoldChipExpand,
+    expandFoldBotReplies,
     FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD,
     FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE,
     FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN,

@@ -849,7 +849,7 @@ describe('Click/Pointerdown Expand', () => {
     assert.strictEqual(sessionStorage.getItem(key), 'true');
   });
 
-  test('pointerdown on chip should be handled', () => {
+  test('pointerdown on chip should be handled but NOT expand', () => {
     document.body.innerHTML = createConversationHTML(
       'Original post',
       ['Spam!', 'Spam!', 'Spam!']
@@ -864,16 +864,198 @@ describe('Click/Pointerdown Expand', () => {
     hostCell.insertBefore(chip, hostCell.firstChild);
     
     let pointerdownHandled = false;
+    let expandCalled = false;
+    
     chip.addEventListener('pointerdown', (e) => {
       pointerdownHandled = true;
       e.preventDefault();
       e.stopPropagation();
+      e.stopImmediatePropagation();
     });
     
     const event = new dom.window.Event('pointerdown', { bubbles: true });
     chip.dispatchEvent(event);
     
     assert.strictEqual(pointerdownHandled, true, 'pointerdown should be handled');
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'false', 'aria-expanded should still be false after pointerdown');
+    assert.ok(document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS), 'chip should still be present after pointerdown');
+  });
+});
+
+describe('Pointerdown Does NOT Expand', () => {
+  let dom;
+  let document;
+  let sessionStorageMock;
+
+  beforeEach(() => {
+    sessionStorageMock = new Map();
+    
+    dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+      url: 'https://x.com/user/status/123456789'
+    });
+    document = dom.window.document;
+    global.document = document;
+    global.HTMLElement = dom.window.HTMLElement;
+    global.Node = dom.window.Node;
+    global.window = dom.window;
+    
+    global.sessionStorage = {
+      getItem: (key) => sessionStorageMock.get(key) || null,
+      setItem: (key, value) => sessionStorageMock.set(key, value),
+      removeItem: (key) => sessionStorageMock.delete(key),
+    };
+  });
+
+  afterEach(() => {
+    dom.window.close();
+    delete global.document;
+    delete global.HTMLElement;
+    delete global.Node;
+    delete global.window;
+    delete global.sessionStorage;
+  });
+
+  test('pointerdown alone must NOT expand - chip still present', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.setAttribute('tabindex', '0');
+    chip.setAttribute('role', 'button');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    const pointerdownEvent = new dom.window.Event('pointerdown', { bubbles: true });
+    chip.dispatchEvent(pointerdownEvent);
+    
+    const chipAfterPointerdown = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    assert.ok(chipAfterPointerdown, 'chip must still be present after pointerdown alone');
+    assert.strictEqual(chipAfterPointerdown.getAttribute('aria-expanded'), 'false', 
+      'chip aria-expanded must still be false after pointerdown');
+    assert.ok(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), 
+      'folded cells must still be hidden after pointerdown');
+    assert.ok(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), 
+      'folded cells must still be hidden after pointerdown');
+  });
+
+  test('click expands and removes hidden class from cells', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    cell1.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'true', 
+      'chip aria-expanded should be true after click');
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_EXPANDED_CLASS), 
+      'chip should have expanded class after click');
+    assert.strictEqual(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
+      'cell1 should be visible after click');
+    assert.strictEqual(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
+      'cell2 should be visible after click');
+  });
+
+  test('pointerdown followed by click expands correctly', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    const pointerdownEvent = new dom.window.Event('pointerdown', { bubbles: true });
+    chip.dispatchEvent(pointerdownEvent);
+    
+    assert.ok(document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS), 
+      'chip still present after pointerdown');
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'false', 
+      'aria-expanded still false after pointerdown');
+    
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    cell1.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'true', 
+      'chip aria-expanded should be true after click');
+    assert.strictEqual(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
+      'cell1 should be visible after click');
+    assert.strictEqual(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
+      'cell2 should be visible after click');
+  });
+
+  test('expanded state persists on re-apply (sessionStorage true)', () => {
+    const key = 'quietx-fold-expanded:/user/status/123456789';
+    sessionStorage.setItem(key, 'true');
+    
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Hide 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    
+    const isExpanded = sessionStorage.getItem(key) === 'true';
+    assert.strictEqual(isExpanded, true, 'expanded state should persist in sessionStorage');
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'true', 
+      'chip aria-expanded should remain true on re-apply');
+    assert.strictEqual(chip.classList.contains(FOLD_BOT_REPLIES_EXPANDED_CLASS), true, 
+      'chip should have expanded class on re-apply');
   });
 });
 
