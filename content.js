@@ -1,3 +1,569 @@
+// ---- Fold Bot Replies Feature (1.0.21 - Pro feature) ----
+// Local-only collapse of near-duplicate / template spam replies under any status.
+// SECURITY: ZERO clicks on Hide/Delete/Block/Mute - purely visual DOM collapse.
+// CRITICAL: ONE chip per page, parked INSIDE a reply cell (not naked sibling).
+
+const FOLD_BOT_REPLIES_STORAGE_KEY = 'foldBotReplies';
+const FOLD_BOT_REPLIES_HIDDEN_CLASS = 'quietx-folded-reply';
+const FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS = 'quietx-folded-cell';
+const FOLD_BOT_REPLIES_HOST_CELL_CLASS = 'quietx-fold-host-cell';
+const FOLD_BOT_REPLIES_CHIP_CLASS = 'quietx-fold-chip';
+const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
+const FOLD_BOT_REPLIES_PRESSED_CLASS = 'quietx-bot-fold-chip-pressed';
+const FOLD_BOT_REPLIES_EXPAND_DELAY_MS = 200;
+const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
+const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
+const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
+const FOLD_BOT_REPLIES_SESSION_KEY_PREFIX = 'quietx-fold-expanded:';
+
+let isFoldBotRepliesEnabled = false;
+let foldBotRepliesObserver = null;
+let foldBotRepliesCurrentPageId = null;
+
+/**
+ * Get the sessionStorage key for the current status page.
+ */
+function getFoldExpandedSessionKey() {
+  return FOLD_BOT_REPLIES_SESSION_KEY_PREFIX + window.location.pathname;
+}
+
+/**
+ * Check if the fold is expanded for the current page (persisted in sessionStorage).
+ */
+function isFoldExpanded() {
+  try {
+    return sessionStorage.getItem(getFoldExpandedSessionKey()) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set the expanded state for the current page in sessionStorage.
+ */
+function setFoldExpanded(expanded) {
+  try {
+    if (expanded) {
+      sessionStorage.setItem(getFoldExpandedSessionKey(), 'true');
+    } else {
+      sessionStorage.removeItem(getFoldExpandedSessionKey());
+    }
+  } catch {
+    // sessionStorage may be unavailable
+  }
+}
+
+/**
+ * Normalize text for similarity comparison.
+ * Removes URLs, mentions, hashtags, emojis, extra whitespace, and lowercases.
+ */
+function normalizeTextForSimilarity(text) {
+  if (!text || typeof text !== 'string') return '';
+  let normalized = text
+    .toLowerCase()
+    .replace(/https?:\/\/[^\s]+/gi, '')
+    .replace(/@\w+/g, '')
+    .replace(/#\w+/g, '')
+    .replace(/[\u{1F600}-\u{1F6FF}]/gu, '')
+    .replace(/[\u{1F300}-\u{1F5FF}]/gu, '')
+    .replace(/[\u{1F680}-\u{1F6FF}]/gu, '')
+    .replace(/[\u{2600}-\u{26FF}]/gu, '')
+    .replace(/[\u{2700}-\u{27BF}]/gu, '')
+    .replace(/[\u{1F900}-\u{1F9FF}]/gu, '')
+    .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized;
+}
+
+/**
+ * Compute Levenshtein distance between two strings.
+ */
+function levenshteinDistance(a, b) {
+  if (!a || !b) return Math.max((a || '').length, (b || '').length);
+  if (a === b) return 0;
+  
+  const m = a.length;
+  const n = b.length;
+  
+  if (m === 0) return n;
+  if (n === 0) return m;
+  
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array(n + 1);
+  
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  
+  return prev[n];
+}
+
+/**
+ * Compute similarity ratio between two strings (0 to 1).
+ * Uses Levenshtein distance normalized by max length.
+ */
+function similarityRatio(a, b) {
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  
+  const distance = levenshteinDistance(a, b);
+  return 1 - (distance / maxLen);
+}
+
+/**
+ * Check if two texts are similar enough to be considered duplicates.
+ */
+function areTextsSimilar(text1, text2, threshold = FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD) {
+  const norm1 = normalizeTextForSimilarity(text1);
+  const norm2 = normalizeTextForSimilarity(text2);
+  
+  if (norm1.length < 3 || norm2.length < 3) return false;
+  
+  if (norm1 === norm2) return true;
+  
+  return similarityRatio(norm1, norm2) >= threshold;
+}
+
+/**
+ * Check if we are on a status/conversation page. Returns status ID or null.
+ */
+function getStatusPageId() {
+  const match = window.location.pathname.match(/\/status\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Check if we are on a status/conversation page.
+ */
+function isOnStatusPage() {
+  return getStatusPageId() !== null;
+}
+
+/**
+ * Get the primary/root status article (the main post, not replies).
+ */
+function getPrimaryStatusArticle() {
+  const statusId = getStatusPageId();
+  if (!statusId) return null;
+  
+  const allArticles = document.querySelectorAll('article[data-testid="tweet"]');
+  
+  for (const article of allArticles) {
+    const statusLink = article.querySelector(`a[href*="/status/${statusId}"]`);
+    if (statusLink) {
+      return article;
+    }
+  }
+  
+  return allArticles[0] || null;
+}
+
+/**
+ * Get the primary article's cellInnerDiv.
+ */
+function getPrimaryCellDiv() {
+  const primaryArticle = getPrimaryStatusArticle();
+  if (!primaryArticle) return null;
+  return primaryArticle.closest('[data-testid="cellInnerDiv"]');
+}
+
+/**
+ * Check if element A comes before element B in document order.
+ */
+function isBeforeInDocument(a, b) {
+  if (!a || !b) return false;
+  const position = a.compareDocumentPosition(b);
+  return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
+ * Get all reply articles (excluding primary) that are AFTER primary in DOM.
+ */
+function getValidReplyArticles() {
+  const primaryArticle = getPrimaryStatusArticle();
+  const primaryCellDiv = getPrimaryCellDiv();
+  const allArticles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+  
+  return allArticles.filter(article => {
+    if (primaryArticle && article === primaryArticle) return false;
+    if (primaryCellDiv && primaryCellDiv.contains(article)) return false;
+    if (primaryArticle && !isBeforeInDocument(primaryArticle, article)) return false;
+    
+    const cellDiv = article.closest('[data-testid="cellInnerDiv"]');
+    if (!cellDiv) return false;
+    if (primaryCellDiv && cellDiv === primaryCellDiv) return false;
+    
+    return true;
+  });
+}
+
+/**
+ * Cluster reply articles by text similarity.
+ * Returns flat array of all articles that belong to any cluster (size>=2).
+ */
+function findAllDuplicateReplies(replyArticles) {
+  if (!replyArticles || replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
+    return [];
+  }
+  
+  const articlesWithText = [];
+  for (const article of replyArticles) {
+    const tweetText = article.querySelector('[data-testid="tweetText"]');
+    const text = tweetText ? (tweetText.textContent || '').trim() : '';
+    const normalizedText = normalizeTextForSimilarity(text);
+    if (normalizedText.length >= 3) {
+      articlesWithText.push({ article, text, normalizedText });
+    }
+  }
+  
+  if (articlesWithText.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) {
+    return [];
+  }
+  
+  const duplicateIndices = new Set();
+  
+  for (let i = 0; i < articlesWithText.length; i++) {
+    for (let j = i + 1; j < articlesWithText.length; j++) {
+      if (areTextsSimilar(articlesWithText[i].text, articlesWithText[j].text)) {
+        duplicateIndices.add(i);
+        duplicateIndices.add(j);
+      }
+    }
+  }
+  
+  const duplicates = [];
+  for (const idx of duplicateIndices) {
+    duplicates.push(articlesWithText[idx]);
+  }
+  
+  duplicates.sort((a, b) => {
+    if (isBeforeInDocument(a.article, b.article)) return -1;
+    if (isBeforeInDocument(b.article, a.article)) return 1;
+    return 0;
+  });
+  
+  return duplicates;
+}
+
+/**
+ * Create the fold chip element (goes INSIDE a cellInnerDiv).
+ */
+function createFoldChip(count) {
+  const chip = document.createElement('div');
+  chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+  chip.setAttribute('data-fold-count', String(count));
+  chip.setAttribute('aria-expanded', 'false');
+  chip.setAttribute('role', 'button');
+  chip.setAttribute('tabindex', '0');
+  
+  chip.innerHTML = `
+    <div class="quietx-fold-inner">
+      <svg class="quietx-fold-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+        <path d="M12 8v8M8 12h8" class="quietx-fold-plus"/>
+      </svg>
+      <span class="quietx-fold-text">Folded ${count} similar replies</span>
+      <span class="quietx-fold-hint">(only you stop seeing them)</span>
+    </div>
+  `;
+  
+  return chip;
+}
+
+/**
+ * Handle fold chip pointerdown: stop propagation, add pressed class.
+ * Do NOT call preventDefault() - that suppresses Chrome :active state.
+ */
+function handleFoldChipPointerdown(e) {
+  const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
+  
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  
+  chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
+}
+
+/**
+ * Handle fold chip click/pointerup: stop propagation, keep pressed class,
+ * then expand AFTER a delay so the pressed chip stays visible.
+ */
+function handleFoldChipExpand(e) {
+  const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
+  
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  
+  setTimeout(() => {
+    expandFoldBotReplies(document);
+  }, FOLD_BOT_REPLIES_EXPAND_DELAY_MS);
+}
+
+/**
+ * Expand all folded bot replies (toggle fold state).
+ */
+function expandFoldBotReplies(root) {
+  const wasExpanded = isFoldExpanded();
+  setFoldExpanded(!wasExpanded);
+  
+  applyFoldState();
+}
+
+/**
+ * Apply the current fold state (collapsed or expanded).
+ */
+function applyFoldState() {
+  const chip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (!chip) return;
+  
+  const count = chip.getAttribute('data-fold-count') || '0';
+  const textEl = chip.querySelector('.quietx-fold-text');
+  const expanded = isFoldExpanded();
+  
+  if (expanded) {
+    chip.setAttribute('aria-expanded', 'true');
+    chip.classList.add(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    if (textEl) textEl.textContent = `Hide ${count} similar replies`;
+    
+    document.querySelectorAll('.' + FOLD_BOT_REPLIES_HIDDEN_CLASS).forEach(el => {
+      el.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+    });
+    document.querySelectorAll('.' + FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS).forEach(el => {
+      el.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    });
+  } else {
+    chip.setAttribute('aria-expanded', 'false');
+    chip.classList.remove(FOLD_BOT_REPLIES_EXPANDED_CLASS);
+    if (textEl) textEl.textContent = `Folded ${count} similar replies`;
+    
+    document.querySelectorAll('[data-quietx-folded="true"]').forEach(el => {
+      const article = el.querySelector('article[data-testid="tweet"]');
+      if (article) {
+        article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+      }
+      if (!el.classList.contains(FOLD_BOT_REPLIES_HOST_CELL_CLASS)) {
+        el.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+      }
+    });
+  }
+}
+
+/**
+ * Remove all fold UI and restore hidden replies.
+ */
+function removeFoldUI() {
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_HOST_CELL_CLASS).forEach(el => {
+    el.classList.remove(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+  });
+  
+  document.querySelectorAll('[data-quietx-folded]').forEach(el => {
+    el.removeAttribute('data-quietx-folded');
+  });
+  
+  document.querySelectorAll('.' + FOLD_BOT_REPLIES_CHIP_CLASS).forEach(el => {
+    el.remove();
+  });
+  
+  setFoldExpanded(false);
+}
+
+/**
+ * Process the current conversation for folding.
+ * ONE chip per page, parked INSIDE topmost folded reply's cellInnerDiv.
+ */
+function processFoldBotReplies() {
+  if (!isFoldBotRepliesEnabled) return;
+  if (!isOnStatusPage()) return;
+  
+  const currentPageId = getStatusPageId();
+  if (currentPageId !== foldBotRepliesCurrentPageId) {
+    foldBotRepliesCurrentPageId = currentPageId;
+  }
+  
+  const expanded = isFoldExpanded();
+  
+  const existingChip = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+  if (existingChip) {
+    applyFoldState();
+    return;
+  }
+  
+  if (expanded) {
+    return;
+  }
+  
+  const replyArticles = getValidReplyArticles();
+  if (replyArticles.length < FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN) return;
+  
+  const duplicates = findAllDuplicateReplies(replyArticles);
+  if (duplicates.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const primaryCellDiv = getPrimaryCellDiv();
+  
+  const validDuplicates = duplicates.filter(item => {
+    const cellDiv = item.article.closest('[data-testid="cellInnerDiv"]');
+    if (!cellDiv) return false;
+    if (primaryCellDiv && cellDiv === primaryCellDiv) return false;
+    if (primaryCellDiv && primaryCellDiv.contains(cellDiv)) return false;
+    return true;
+  });
+  
+  if (validDuplicates.length < FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE) return;
+  
+  const topmostDuplicate = validDuplicates[0];
+  const hostCellDiv = topmostDuplicate.article.closest('[data-testid="cellInnerDiv"]');
+  
+  if (!hostCellDiv) return;
+  if (primaryCellDiv && hostCellDiv === primaryCellDiv) return;
+  
+  for (const item of validDuplicates) {
+    const cellDiv = item.article.closest('[data-testid="cellInnerDiv"]');
+    if (cellDiv) {
+      cellDiv.setAttribute('data-quietx-folded', 'true');
+      item.article.classList.add(FOLD_BOT_REPLIES_HIDDEN_CLASS);
+      
+      if (cellDiv !== hostCellDiv) {
+        cellDiv.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+      }
+    }
+  }
+  
+  hostCellDiv.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+  
+  const chip = createFoldChip(validDuplicates.length);
+  hostCellDiv.insertBefore(chip, hostCellDiv.firstChild);
+}
+
+/**
+ * Setup the fold bot replies observer.
+ */
+function setupFoldBotRepliesObserver() {
+  if (foldBotRepliesObserver) return;
+  
+  document.addEventListener('pointerdown', handleFoldChipPointerdown, true);
+  document.addEventListener('pointerup', handleFoldChipExpand, true);
+  document.addEventListener('click', handleFoldChipExpand, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+      if (chip) {
+        handleFoldChipExpand(e);
+      }
+    }
+  }, true);
+  
+  let debounceTimer = null;
+  
+  foldBotRepliesObserver = new MutationObserver(() => {
+    if (!isFoldBotRepliesEnabled) return;
+    
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      processFoldBotReplies();
+    }, 500);
+  });
+  
+  foldBotRepliesObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+/**
+ * Teardown the fold bot replies observer.
+ */
+function teardownFoldBotRepliesObserver() {
+  if (foldBotRepliesObserver) {
+    foldBotRepliesObserver.disconnect();
+    foldBotRepliesObserver = null;
+  }
+}
+
+/**
+ * Initialize the fold bot replies feature.
+ */
+function initFoldBotReplies() {
+  chrome.storage.local.get(['isPro', FOLD_BOT_REPLIES_STORAGE_KEY], (result) => {
+    const isPro = !!result.isPro;
+    const isEnabled = isPro && result[FOLD_BOT_REPLIES_STORAGE_KEY] === true;
+    
+    isFoldBotRepliesEnabled = isEnabled;
+    
+    if (isEnabled) {
+      console.log('Better X: Fold Bot Replies Enabled 🤖');
+      processFoldBotReplies();
+      setupFoldBotRepliesObserver();
+    }
+  });
+  
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    
+    if (changes[FOLD_BOT_REPLIES_STORAGE_KEY] || changes.isPro) {
+      chrome.storage.local.get(['isPro', FOLD_BOT_REPLIES_STORAGE_KEY], (result) => {
+        const isPro = !!result.isPro;
+        const wasEnabled = isFoldBotRepliesEnabled;
+        isFoldBotRepliesEnabled = isPro && result[FOLD_BOT_REPLIES_STORAGE_KEY] === true;
+        
+        console.log('Better X: Fold Bot Replies switched to:', isFoldBotRepliesEnabled);
+        
+        if (isFoldBotRepliesEnabled && !wasEnabled) {
+          processFoldBotReplies();
+          setupFoldBotRepliesObserver();
+        } else if (!isFoldBotRepliesEnabled && wasEnabled) {
+          removeFoldUI();
+          teardownFoldBotRepliesObserver();
+        }
+      });
+    }
+  });
+}
+
+// Export for testing
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeTextForSimilarity,
+    levenshteinDistance,
+    similarityRatio,
+    areTextsSimilar,
+    findAllDuplicateReplies,
+    handleFoldChipPointerdown,
+    handleFoldChipExpand,
+    expandFoldBotReplies,
+    FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD,
+    FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE,
+    FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN,
+    FOLD_BOT_REPLIES_CHIP_CLASS,
+    FOLD_BOT_REPLIES_HOST_CELL_CLASS,
+    FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS,
+    FOLD_BOT_REPLIES_HIDDEN_CLASS,
+    FOLD_BOT_REPLIES_PRESSED_CLASS,
+    FOLD_BOT_REPLIES_EXPAND_DELAY_MS
+  };
+}
+
 // Create and inject the recycle bin
 function createRecycleBin() {
   const bin = document.createElement("div");
@@ -1579,6 +2145,7 @@ function init() {
       initTweetHistory();
       createRecycleBin();
       initializePosts();
+      initFoldBotReplies();
 
       // Load Ad Blocking preference
       chrome.storage.local.get(['blockAds'], (r) => {
