@@ -9,6 +9,8 @@ const FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS = 'quietx-folded-cell';
 const FOLD_BOT_REPLIES_HOST_CELL_CLASS = 'quietx-fold-host-cell';
 const FOLD_BOT_REPLIES_CHIP_CLASS = 'quietx-fold-chip';
 const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
+const FOLD_BOT_REPLIES_PRESSED_CLASS = 'quietx-bot-fold-chip-pressed';
+const FOLD_BOT_REPLIES_EXPAND_DELAY_MS = 200;
 const FOLD_BOT_REPLIES_SIMILARITY_THRESHOLD = 0.66;
 const FOLD_BOT_REPLIES_MIN_CLUSTER_SIZE = 2;
 const FOLD_BOT_REPLIES_MIN_REPLIES_TO_SCAN = 3;
@@ -284,20 +286,22 @@ function createFoldChip(count) {
 }
 
 /**
- * Handle fold chip pointerdown: ONLY stop propagation, do NOT expand.
- * This allows :active to paint before the chip is removed on pointerup/click.
+ * Handle fold chip pointerdown: stop propagation, add pressed class.
+ * Do NOT call preventDefault() - that suppresses Chrome :active state.
  */
 function handleFoldChipPointerdown(e) {
   const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
   if (!chip) return;
   
-  e.preventDefault();
   e.stopPropagation();
   e.stopImmediatePropagation();
+  
+  chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
 }
 
 /**
- * Handle fold chip click/pointerup: stop propagation AND expand.
+ * Handle fold chip click/pointerup: stop propagation, keep pressed class,
+ * then expand AFTER a delay so the pressed chip stays visible.
  */
 function handleFoldChipExpand(e) {
   const chip = e.target.closest('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
@@ -307,7 +311,9 @@ function handleFoldChipExpand(e) {
   e.stopPropagation();
   e.stopImmediatePropagation();
   
-  expandFoldBotReplies(document);
+  setTimeout(() => {
+    expandFoldBotReplies(document);
+  }, FOLD_BOT_REPLIES_EXPAND_DELAY_MS);
 }
 
 /**
@@ -552,7 +558,9 @@ if (typeof module !== 'undefined' && module.exports) {
     FOLD_BOT_REPLIES_CHIP_CLASS,
     FOLD_BOT_REPLIES_HOST_CELL_CLASS,
     FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS,
-    FOLD_BOT_REPLIES_HIDDEN_CLASS
+    FOLD_BOT_REPLIES_HIDDEN_CLASS,
+    FOLD_BOT_REPLIES_PRESSED_CLASS,
+    FOLD_BOT_REPLIES_EXPAND_DELAY_MS
   };
 }
 

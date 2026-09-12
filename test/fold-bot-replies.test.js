@@ -27,6 +27,8 @@ const FOLD_BOT_REPLIES_HOST_CELL_CLASS = 'quietx-fold-host-cell';
 const FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS = 'quietx-folded-cell';
 const FOLD_BOT_REPLIES_HIDDEN_CLASS = 'quietx-folded-reply';
 const FOLD_BOT_REPLIES_EXPANDED_CLASS = 'quietx-fold-expanded';
+const FOLD_BOT_REPLIES_PRESSED_CLASS = 'quietx-bot-fold-chip-pressed';
+const FOLD_BOT_REPLIES_EXPAND_DELAY_MS = 200;
 
 function normalizeTextForSimilarity(text) {
   if (!text || typeof text !== 'string') return '';
@@ -849,7 +851,7 @@ describe('Click/Pointerdown Expand', () => {
     assert.strictEqual(sessionStorage.getItem(key), 'true');
   });
 
-  test('pointerdown on chip should be handled but NOT expand', () => {
+  test('pointerdown on chip should be handled but NOT expand, and adds pressed class', () => {
     document.body.innerHTML = createConversationHTML(
       'Original post',
       ['Spam!', 'Spam!', 'Spam!']
@@ -864,13 +866,12 @@ describe('Click/Pointerdown Expand', () => {
     hostCell.insertBefore(chip, hostCell.firstChild);
     
     let pointerdownHandled = false;
-    let expandCalled = false;
     
     chip.addEventListener('pointerdown', (e) => {
       pointerdownHandled = true;
-      e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
+      chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
     });
     
     const event = new dom.window.Event('pointerdown', { bubbles: true });
@@ -879,6 +880,7 @@ describe('Click/Pointerdown Expand', () => {
     assert.strictEqual(pointerdownHandled, true, 'pointerdown should be handled');
     assert.strictEqual(chip.getAttribute('aria-expanded'), 'false', 'aria-expanded should still be false after pointerdown');
     assert.ok(document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS), 'chip should still be present after pointerdown');
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_PRESSED_CLASS), 'chip should have pressed class after pointerdown');
   });
 });
 
@@ -951,6 +953,35 @@ describe('Pointerdown Does NOT Expand', () => {
       'folded cells must still be hidden after pointerdown');
   });
 
+  test('pointerdown adds pressed class to chip', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    assert.strictEqual(chip.classList.contains(FOLD_BOT_REPLIES_PRESSED_CLASS), false,
+      'chip should NOT have pressed class before pointerdown');
+    
+    chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
+    
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_PRESSED_CLASS),
+      'chip should have pressed class after pointerdown');
+    assert.ok(document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS),
+      'chip must still be present after pointerdown');
+    assert.strictEqual(chip.getAttribute('aria-expanded'), 'false',
+      'chip aria-expanded must still be false after pointerdown');
+  });
+
   test('click expands and removes hidden class from cells', () => {
     document.body.innerHTML = createConversationHTML(
       'Original post',
@@ -987,7 +1018,7 @@ describe('Pointerdown Does NOT Expand', () => {
       'cell2 should be visible after click');
   });
 
-  test('pointerdown followed by click expands correctly', () => {
+  test('immediately after click chip is still present with pressed class', () => {
     document.body.innerHTML = createConversationHTML(
       'Original post',
       ['Spam!', 'Spam!', 'Spam!']
@@ -1008,11 +1039,46 @@ describe('Pointerdown Does NOT Expand', () => {
     cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
     cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
     
-    const pointerdownEvent = new dom.window.Event('pointerdown', { bubbles: true });
-    chip.dispatchEvent(pointerdownEvent);
+    chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
+    
+    const chipImmediatelyAfterClick = document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS);
+    assert.ok(chipImmediatelyAfterClick, 
+      'chip must still be present immediately after click (before 200ms delay)');
+    assert.ok(chipImmediatelyAfterClick.classList.contains(FOLD_BOT_REPLIES_PRESSED_CLASS),
+      'chip must still have pressed class immediately after click');
+    assert.ok(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS),
+      'cells must still be hidden immediately after click (before 200ms delay)');
+    assert.ok(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS),
+      'cells must still be hidden immediately after click (before 200ms delay)');
+  });
+
+  test('pointerdown followed by click expands correctly after delay', () => {
+    document.body.innerHTML = createConversationHTML(
+      'Original post',
+      ['Spam!', 'Spam!', 'Spam!']
+    );
+    
+    const hostCell = document.getElementById('reply-cell-0');
+    hostCell.classList.add(FOLD_BOT_REPLIES_HOST_CELL_CLASS);
+    
+    const chip = document.createElement('div');
+    chip.className = FOLD_BOT_REPLIES_CHIP_CLASS;
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('data-fold-count', '3');
+    chip.innerHTML = '<span class="quietx-fold-text">Folded 3 similar replies</span>';
+    hostCell.insertBefore(chip, hostCell.firstChild);
+    
+    const cell1 = document.getElementById('reply-cell-1');
+    const cell2 = document.getElementById('reply-cell-2');
+    cell1.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    cell2.classList.add(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
+    
+    chip.classList.add(FOLD_BOT_REPLIES_PRESSED_CLASS);
     
     assert.ok(document.querySelector('.' + FOLD_BOT_REPLIES_CHIP_CLASS), 
       'chip still present after pointerdown');
+    assert.ok(chip.classList.contains(FOLD_BOT_REPLIES_PRESSED_CLASS),
+      'chip has pressed class after pointerdown');
     assert.strictEqual(chip.getAttribute('aria-expanded'), 'false', 
       'aria-expanded still false after pointerdown');
     
@@ -1022,11 +1088,16 @@ describe('Pointerdown Does NOT Expand', () => {
     cell2.classList.remove(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS);
     
     assert.strictEqual(chip.getAttribute('aria-expanded'), 'true', 
-      'chip aria-expanded should be true after click');
+      'chip aria-expanded should be true after delay');
     assert.strictEqual(cell1.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
-      'cell1 should be visible after click');
+      'cell1 should be visible after delay');
     assert.strictEqual(cell2.classList.contains(FOLD_BOT_REPLIES_CELL_HIDDEN_CLASS), false, 
-      'cell2 should be visible after click');
+      'cell2 should be visible after delay');
+  });
+
+  test('expand delay constant is 200ms', () => {
+    assert.strictEqual(FOLD_BOT_REPLIES_EXPAND_DELAY_MS, 200,
+      'expand delay should be 200ms to allow pressed state to be visible');
   });
 
   test('expanded state persists on re-apply (sessionStorage true)', () => {

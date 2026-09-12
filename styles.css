@@ -1051,10 +1051,21 @@ input:checked+.slider:before {
   outline-offset: 2px;
 }
 
-.quietx-fold-chip:active {
+.quietx-fold-chip:active,
+.quietx-fold-chip.quietx-bot-fold-chip-pressed {
   transform: scale(0.96);
-  background: rgba(29, 155, 240, 0.25);
+  background: rgba(29, 155, 240, 0.35);
   transition: transform 60ms ease, background 60ms ease;
+}
+
+.quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-text,
+.quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-icon {
+  color: rgba(29, 155, 240, 1);
+  fill: rgba(29, 155, 240, 1);
+}
+
+.quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-icon .quietx-fold-plus {
+  stroke: rgba(29, 155, 240, 1);
 }
 
 .quietx-fold-inner {
@@ -1114,10 +1125,21 @@ input:checked+.slider:before {
     background: rgba(29, 155, 240, 0.08);
   }
 
-  .quietx-fold-chip:active {
+  .quietx-fold-chip:active,
+  .quietx-fold-chip.quietx-bot-fold-chip-pressed {
     transform: scale(0.96);
-    background: rgba(29, 155, 240, 0.18);
+    background: rgba(29, 155, 240, 0.25);
     transition: transform 60ms ease, background 60ms ease;
+  }
+
+  .quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-text,
+  .quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-icon {
+    color: rgba(29, 155, 240, 1);
+    fill: rgba(29, 155, 240, 1);
+  }
+
+  .quietx-fold-chip.quietx-bot-fold-chip-pressed .quietx-fold-icon .quietx-fold-plus {
+    stroke: rgba(29, 155, 240, 1);
   }
 
   .quietx-fold-inner {
