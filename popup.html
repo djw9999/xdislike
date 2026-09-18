@@ -24,8 +24,16 @@
       box-sizing: border-box;
     }
 
+    html {
+      width: 348px;
+      min-width: 348px;
+      max-width: 348px;
+    }
+
     body {
       width: 348px;
+      min-width: 348px;
+      max-width: 348px;
       margin: 0;
       padding: 0;
       background:
@@ -46,6 +54,9 @@
     }
 
     .popup-shell {
+      width: 348px;
+      min-width: 348px;
+      max-width: 348px;
       padding: 14px;
     }
 
@@ -168,7 +179,7 @@
     }
 
     #main-features {
-      display: grid;
+      display: none;
       gap: 10px;
       margin-top: 12px;
     }
@@ -313,6 +324,8 @@
       background: var(--panel-soft);
       border: 1px solid rgba(255, 255, 255, 0.075);
       cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
       transition:
         background 140ms ease,
         border-color 140ms ease;
@@ -395,80 +408,76 @@
     }
 
     #activation-form {
-      display: none;
+      display: grid;
       gap: 10px;
       margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
       padding: 14px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, 0.055);
-      border: 1px solid rgba(255, 255, 255, 0.075);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.035)),
+        rgba(15, 20, 25, 0.82);
+      box-shadow: var(--shadow);
     }
 
-    #activation-form .form-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--text);
-      margin-bottom: 4px;
+    .activation-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 850;
     }
 
-    #activation-form .form-desc {
-      font-size: 11px;
+    .activation-copy {
+      margin: 0;
       color: var(--muted);
-      margin-bottom: 8px;
+      font-size: 12px;
+      line-height: 1.35;
     }
 
-    #activation-form input[type="text"] {
+    #license-key {
       width: 100%;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.06);
+      height: 42px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(0, 0, 0, 0.24);
       color: var(--text);
-      font-size: 13px;
+      outline: none;
+      padding: 0 12px;
     }
 
-    #activation-form input[type="text"]::placeholder {
-      color: var(--muted);
+    #license-key:focus {
+      border-color: rgba(29, 155, 240, 0.55);
+      box-shadow: 0 0 0 3px rgba(29, 155, 240, 0.16);
     }
 
-    #activation-form button {
+    #activate-btn,
+    .license-link {
       width: 100%;
-      padding: 10px 16px;
-      border-radius: 10px;
-      background: var(--blue);
-      color: #fff;
+      min-height: 40px;
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 850;
+    }
+
+    #activate-btn {
       cursor: pointer;
-      border: none;
-      transition: background 140ms ease;
+      color: #ffffff;
+      background: var(--blue);
+      box-shadow: 0 0 24px rgba(29, 155, 240, 0.26);
     }
 
-    #activation-form button:hover {
-      background: #1a8cd8;
+    #activate-btn:disabled {
+      opacity: 0.7;
+      cursor: progress;
     }
 
-    #activation-form button:disabled {
-      background: rgba(255, 255, 255, 0.12);
-      cursor: not-allowed;
-    }
-
-    .toggle-card.pro-feature.locked {
-      opacity: 0.5;
-      pointer-events: none;
-    }
-
-    .toggle-card.pro-feature .pro-badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 6px;
-      background: var(--blue-soft);
-      color: var(--blue);
-      font-size: 9px;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-left: 6px;
+    .license-link {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.09);
     }
   </style>
 </head>
@@ -484,7 +493,7 @@
             <p class="tagline">Local cleanup tools for a less noisy X feed.</p>
           </div>
         </div>
-        <div class="status-pill" id="ready-status">READY</div>
+        <div class="status-pill locked" id="ready-status">LOCKED</div>
       </div>
 
       <div class="quick-stats" aria-label="Feature summary">
@@ -502,6 +511,16 @@
         </div>
       </div>
     </section>
+
+    <div id="activation-form">
+      <p class="activation-title">Unlock Better X</p>
+      <p class="activation-copy">Activate your license to enable mini window, hide promoted posts, merge communities, and drag-to-hide cleanup.</p>
+      <input type="text" id="license-key" placeholder="Enter license key">
+      <button id="activate-btn" type="button">Activate License</button>
+      <a class="license-link" href="https://buy.polar.sh/polar_cl_neMM1dkLgWb98LERCr90GLW3UNQ6W5cF7CzxI3LYMQg" target="_blank">
+        Get a License
+      </a>
+    </div>
 
     <div id="main-features">
       <div class="section-label">
@@ -552,12 +571,93 @@
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
 
-        <label class="toggle-card pro-feature locked">
+        <label class="toggle-card">
           <span class="toggle-copy">
-            <span class="toggle-title">Hide tweet Grok icon<span class="pro-badge">Pro</span></span>
-            <span class="toggle-desc">Hide Grok actions button next to the ... More menu.</span>
+            <span class="toggle-title">Pin Following</span>
+            <span class="toggle-desc">Stay on Following tab on home timeline.</span>
           </span>
-          <input type="checkbox" id="hide-tweet-grok-icon" disabled>
+          <input type="checkbox" id="pin-following">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide Grok and Premium promo</span>
+            <span class="toggle-desc">Hide Grok buttons, drawers, and Premium upsells.</span>
+          </span>
+          <input type="checkbox" id="hide-grok-chrome">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide @grok posts</span>
+            <span class="toggle-desc">Hide @grok summons and Grok replies in the timeline.</span>
+          </span>
+          <input type="checkbox" id="hide-grok-posts">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide Discover more</span>
+            <span class="toggle-desc">Hide Discover more and More from this author under replies.</span>
+          </span>
+          <input type="checkbox" id="hide-discover-more">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide media preview</span>
+            <span class="toggle-desc">Hide image and video previews on Home. Open a post to see media.</span>
+          </span>
+          <input type="checkbox" id="hide-media-preview">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide view counts</span>
+            <span class="toggle-desc">Hide Views under tweets. Replies, reposts, and likes stay.</span>
+          </span>
+          <input type="checkbox" id="hide-views">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide Trends</span>
+            <span class="toggle-desc">Hide What's happening / Trends in the right column. Search stays.</span>
+          </span>
+          <input type="checkbox" id="hide-trends">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Hide tweet Grok icon</span>
+            <span class="toggle-desc">Hide the Grok button on tweets. Replies, reposts, and likes stay.</span>
+          </span>
+          <input type="checkbox" id="hide-tweet-grok-icon" data-storage-key="hideTweetGrokIcon">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Clean similar replies</span>
+            <span class="toggle-desc">Clean similar replies on your own posts (max 50). Hide when available, else Delete reply — never delete the post.</span>
+          </span>
+          <input type="checkbox" id="cleaner-own-replies" data-storage-key="cleanerOwnReplies">
+          <span class="toggle-ui" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-card">
+          <span class="toggle-copy">
+            <span class="toggle-title">Fold suspected bot replies</span>
+            <span class="toggle-desc">On status pages, fold near-duplicate reply clusters on this browser only. Only you stop seeing them — expand anytime. Does not hide or delete for others.</span>
+          </span>
+          <input type="checkbox" id="fold-bot-replies" data-storage-key="foldBotReplies">
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
 
@@ -570,13 +670,6 @@
           <span class="toggle-ui" aria-hidden="true"></span>
         </label>
       </div>
-    </div>
-
-    <div id="activation-form">
-      <div class="form-title">Activate Pro</div>
-      <div class="form-desc">Enter your license key to unlock Pro features.</div>
-      <input type="text" id="license-key" placeholder="XXXX-XXXX-XXXX-XXXX">
-      <button type="button" id="activate-btn">Activate License</button>
     </div>
 
     <p class="helper-note">First run: turn on the cleanup you want, refresh X if it was already open, then drag noisy posts to the trash button or use the mini window for quick check-ins.</p>
